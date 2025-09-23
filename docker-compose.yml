@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  blockchain:
+    build: .
+    container_name: blockchain
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+    command: ["./build/blockchain_cli"]
+
+  blockchain-test:
+    build: .
+    container_name: blockchain-test
+    command: ["./build/blockchain_tests"]
+    volumes:
+      - ./data:/app/data

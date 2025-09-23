@@ -1,0 +1,60 @@
+{
+  "blockchain": {
+    "data_directory": "./data",
+    "enable_mining": false,
+    "mining_threads": 1,
+    "max_block_size": 1048576,
+    "max_transaction_size": 100000,
+    "transaction_fee_rate": 0.0001
+  },
+  "network": {
+    "listen_port": 8333,
+    "listen_address": "0.0.0.0",
+    "max_connections": 50,
+    "connection_timeout": 30000,
+    "message_timeout": 5000,
+    "enable_listening": true,
+    "bootstrap_nodes": [
+      {
+        "address": "127.0.0.1",
+        "port": 8333
+      }
+    ]
+  },
+  "consensus": {
+    "type": "proof_of_work",
+    "difficulty": 1,
+    "block_time": 600,
+    "difficulty_adjustment_interval": 2016
+  },
+  "crypto": {
+    "hash_algorithm": "sha256",
+    "signature_algorithm": "ecdsa_secp256k1",
+    "key_size": 256
+  },
+  "storage": {
+    "block_storage_type": "file",
+    "state_storage_type": "file",
+    "cache_size": 1000,
+    "enable_compression": true
+  },
+  "logging": {
+    "level": "info",
+    "output": "console",
+    "file_path": "./logs/deo.log",
+    "max_file_size": 10485760,
+    "max_files": 5
+  },
+  "rpc": {
+    "enabled": false,
+    "port": 8332,
+    "address": "127.0.0.1",
+    "username": "",
+    "password": ""
+  },
+  "wallet": {
+    "enabled": true,
+    "data_directory": "./wallet",
+    "encrypt_wallet": false
+  }
+}
