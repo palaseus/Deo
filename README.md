@@ -317,7 +317,7 @@ Comprehensive testing suite including:
 ```bash
 sudo apt-get update
 sudo apt-get install build-essential cmake libleveldb-dev libssl-dev
-git clone <repository-url>
+git clone https://github.com/palaseus/Deo.git
 cd Deo
 mkdir build && cd build
 cmake ..
@@ -328,7 +328,7 @@ make -j$(nproc)
 
 ```bash
 brew install cmake leveldb openssl
-git clone <repository-url>
+git clone https://github.com/palaseus/Deo.git
 cd Deo
 mkdir build && cd build
 cmake ..
@@ -340,7 +340,7 @@ make -j$(nproc)
 ```cmd
 # Install vcpkg and required packages
 vcpkg install leveldb openssl
-git clone <repository-url>
+git clone https://github.com/palaseus/Deo.git
 cd Deo
 mkdir build && cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
