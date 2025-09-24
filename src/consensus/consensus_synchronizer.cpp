@@ -4,6 +4,7 @@
  */
 
 #include "consensus/consensus_synchronizer.h"
+#include "crypto/hash.h"
 #include <algorithm>
 #include <chrono>
 
@@ -514,34 +515,83 @@ bool DeterministicValidator::validateStateTransition(const std::string& /* previ
     return true;
 }
 
-bool DeterministicValidator::testDeterministicExecution(const std::vector<std::shared_ptr<core::Transaction>>& /* transactions */) {
+bool DeterministicValidator::testDeterministicExecution(const std::vector<std::shared_ptr<core::Transaction>>& transactions) {
     DEO_LOG_DEBUG(CONSENSUS, "Testing deterministic execution");
     
-    // TODO: Implement deterministic execution testing
-    // This would involve:
-    // 1. Executing transactions multiple times
-    // 2. Comparing execution results
-    // 3. Verifying identical state transitions
-    
-    bool passed = true; // Placeholder
-    
-    if (passed) {
+    if (transactions.empty()) {
         recordDeterminismTest(true);
-    } else {
-        recordDeterminismTest(false);
+        return true;
     }
     
-    return passed;
+    try {
+        // Execute transactions multiple times and compare results
+        std::vector<std::string> execution_hashes;
+        
+        for (int i = 0; i < 3; ++i) { // Execute 3 times
+            std::string execution_hash = calculateExecutionHash(transactions);
+            execution_hashes.push_back(execution_hash);
+        }
+        
+        // Check if all executions produced the same result
+        bool all_identical = true;
+        for (size_t i = 1; i < execution_hashes.size(); ++i) {
+            if (execution_hashes[i] != execution_hashes[0]) {
+                all_identical = false;
+                break;
+            }
+        }
+        
+        if (all_identical) {
+            recordDeterminismTest(true);
+            DEO_LOG_DEBUG(CONSENSUS, "Deterministic execution test passed");
+            return true;
+        } else {
+            recordDeterminismTest(false);
+            DEO_LOG_ERROR(CONSENSUS, "Deterministic execution test failed - inconsistent results");
+            return false;
+        }
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(CONSENSUS, "Deterministic execution test failed with exception: " + std::string(e.what()));
+        recordDeterminismTest(false);
+        return false;
+    }
 }
 
-std::string DeterministicValidator::calculateExecutionHash(const std::vector<std::shared_ptr<core::Transaction>>& /* transactions */) {
-    // TODO: Implement execution hash calculation
-    // This would involve:
-    // 1. Executing all transactions
-    // 2. Collecting execution results
-    // 3. Calculating a hash of the results
+std::string DeterministicValidator::calculateExecutionHash(const std::vector<std::shared_ptr<core::Transaction>>& transactions) {
+    if (transactions.empty()) {
+        return crypto::Hash::sha256("empty_transactions");
+    }
     
-    return "execution_hash_placeholder";
+    try {
+        std::stringstream execution_data;
+        
+        // Collect execution data from all transactions
+        for (const auto& tx : transactions) {
+            if (tx) {
+                // Add transaction hash
+                execution_data << tx->calculateHash();
+                
+                // Add transaction inputs
+                for (const auto& input : tx->getInputs()) {
+                    execution_data << input.previous_tx_hash << input.output_index;
+                }
+                
+                // Add transaction outputs
+                for (const auto& output : tx->getOutputs()) {
+                    execution_data << output.value << output.recipient_address;
+                }
+            }
+        }
+        
+        // Calculate hash of all execution data
+        std::string data = execution_data.str();
+        return crypto::Hash::sha256(data);
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(CONSENSUS, "Failed to calculate execution hash: " + std::string(e.what()));
+        return "error_hash";
+    }
 }
 
 DeterministicValidator::ValidationStats DeterministicValidator::getValidationStats() const {

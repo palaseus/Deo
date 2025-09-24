@@ -84,7 +84,10 @@ bool StateTrie::initialize(const std::string& db_path) {
     // Create directory if it doesn't exist
     std::string dir = db_path.substr(0, db_path.find_last_of('/'));
     if (!dir.empty()) {
-        (void)std::system(("mkdir -p " + dir).c_str());
+        int result = std::system(("mkdir -p " + dir).c_str());
+        if (result != 0) {
+            DEO_LOG_WARNING(BLOCKCHAIN, "Failed to create directory: " + dir);
+        }
     }
     
     // Load existing state

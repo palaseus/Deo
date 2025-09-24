@@ -151,6 +151,7 @@ public:
     
     // Initialization and configuration
     bool initialize(const std::string& node_id, const std::string& private_key);
+    bool initializeForTesting(const std::string& node_id, const std::string& private_key = "");
     void shutdown();
     
     // Peer management

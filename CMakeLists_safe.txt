@@ -10,32 +10,33 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(MSVC)
     add_compile_options(/W4 /WX /permissive-)
 else()
-    # Enable basic warnings
-    add_compile_options(-Wall -Wextra -Wpedantic)
-    add_compile_options(-Wformat=2 -Wformat-security)
+    # Enable all warnings and treat them as errors
+    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+    add_compile_options(-Wconversion -Wsign-conversion -Wcast-qual -Wcast-align)
+    add_compile_options(-Wformat=2 -Wformat-security -Wformat-nonliteral)
     add_compile_options(-Wundef -Wshadow -Wredundant-decls -Wunused)
     add_compile_options(-Wmissing-include-dirs -Wmissing-declarations)
-    add_compile_options(-Wuninitialized -Winit-self)
+    add_compile_options(-Wstrict-overflow=5 -Warray-bounds=2)
+    add_compile_options(-Wimplicit-fallthrough=5 -Wswitch-enum)
+    add_compile_options(-Wuninitialized -Winit-self -Wmaybe-uninitialized)
+    add_compile_options(-Wlogical-op -Wduplicated-cond -Wduplicated-branches)
     add_compile_options(-Wnull-dereference -Wdouble-promotion -Wfloat-equal)
     
     # Suppress OpenSSL 3.0 deprecation warnings
     add_compile_options(-Wno-deprecated-declarations)
     
-    # Suppress Google Test framework warnings
-    add_compile_options(-Wno-double-promotion)
-    add_compile_options(-Wno-float-equal)
-    add_compile_options(-Wno-null-dereference)
-    
     # Enable sanitizers for debug builds
     if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "DebugSanitized")
-        add_compile_options(-fsanitize=address -fsanitize=undefined)
+        add_compile_options(-fsanitize=address -fsanitize=undefined -fsanitize=leak)
+        add_compile_options(-fsanitize=thread -fsanitize=memory)
         add_compile_options(-fno-omit-frame-pointer -fno-optimize-sibling-calls)
         add_compile_options(-g -O1)
     endif()
     
     # Enable sanitizers for release builds with debug info
     if(CMAKE_BUILD_TYPE STREQUAL "ReleaseSanitized")
-        add_compile_options(-fsanitize=address -fsanitize=undefined)
+        add_compile_options(-fsanitize=address -fsanitize=undefined -fsanitize=leak)
+        add_compile_options(-fsanitize=thread -fsanitize=memory)
         add_compile_options(-fno-omit-frame-pointer -fno-optimize-sibling-calls)
         add_compile_options(-g -O2)
     endif()
@@ -91,39 +92,30 @@ FetchContent_MakeAvailable(uint256_t)
 
 # Source files
 set(SOURCES
-    main.cpp
+    src/main.cpp
     src/vm/virtual_machine.cpp
     src/vm/instruction_handlers.cpp
     src/vm/smart_contract_manager.cpp
-    src/vm/smart_contract.cpp
-    src/vm/state_store.cpp
     src/vm/vm_block_validator.cpp
     src/vm/determinism_tester.cpp
     src/vm/uint256.cpp
     src/core/blockchain.cpp
     src/core/block.cpp
-    src/core/merkle_tree.cpp
     src/core/transaction.cpp
     src/core/transaction_receipt.cpp
     src/core/state_trie.cpp
     src/core/transaction_fees.cpp
-    src/consensus/consensus_engine.cpp
     src/consensus/proof_of_work.cpp
     src/consensus/proof_of_authority.cpp
     src/consensus/proof_of_stake.cpp
     src/consensus/consensus_synchronizer.cpp
     src/network/network_messages.cpp
-    src/network/network_manager.cpp
     src/network/tcp_network.cpp
     src/network/peer_connection_manager.cpp
     src/network/peer_authentication.cpp
-    src/network/peer_manager.cpp
     src/network/gossip_protocol.cpp
     src/network/transaction_mempool.cpp
     src/network/p2p_network_manager.cpp
-    src/node/node_runtime.cpp
-    src/storage/block_storage.cpp
-    src/storage/state_storage.cpp
     src/storage/leveldb_block_storage.cpp
     src/storage/leveldb_state_storage.cpp
     src/storage/block_pruning_manager.cpp
@@ -132,15 +124,11 @@ set(SOURCES
     src/testing/scale_testing_framework.cpp
     src/testing/adversarial_testing_framework.cpp
     src/compiler/contract_compiler.cpp
-    src/cli/command_parser.cpp
     src/cli/commands.cpp
     src/cli/contract_cli.cpp
     src/api/json_rpc_server.cpp
     src/crypto/hash.cpp
-    src/crypto/key_pair.cpp
     src/crypto/signature.cpp
-    src/utils/config.cpp
-    src/utils/error_handler.cpp
     src/utils/logger.cpp
 )
 
@@ -166,12 +154,14 @@ set(HEADERS
     include/network/tcp_network.h
     include/network/peer_connection_manager.h
     include/network/peer_authentication.h
+    include/network/gossip_protocol.h
     include/network/transaction_mempool.h
     include/network/p2p_network_manager.h
     include/storage/block_storage.h
     include/storage/state_storage.h
     include/storage/leveldb_storage.h
     include/storage/block_pruning.h
+    include/storage/state_snapshot.h
     include/sync/fast_sync.h
     include/testing/scale_testing.h
     include/testing/adversarial_testing.h
@@ -211,28 +201,37 @@ set(TEST_SOURCES
     tests/core/test_blockchain.cpp
     tests/core/test_block.cpp
     tests/core/test_transaction.cpp
+    tests/core/test_transaction_receipt.cpp
+    tests/core/test_state_trie.cpp
     tests/core/test_transaction_fees.cpp
     tests/consensus/test_proof_of_work.cpp
+    tests/consensus/test_proof_of_authority.cpp
     tests/consensus/test_proof_of_stake.cpp
     tests/consensus/test_proof_of_stake_safe.cpp
+    tests/consensus/test_consensus_synchronizer.cpp
+    tests/network/test_network_messages.cpp
+    tests/network/test_tcp_network.cpp
     tests/network/test_peer_connection_manager.cpp
     tests/network/test_peer_authentication.cpp
+    tests/network/test_gossip_protocol.cpp
+    tests/network/test_transaction_mempool.cpp
+    tests/network/test_p2p_network_manager.cpp
     tests/network/test_peer_reputation.cpp
+    tests/network/test_peer_reputation_simple.cpp
     tests/storage/test_leveldb_storage.cpp
     tests/storage/test_block_pruning.cpp
     tests/sync/test_fast_sync.cpp
     tests/testing/test_scale_testing.cpp
     tests/testing/test_adversarial_testing.cpp
     tests/compiler/test_contract_compiler.cpp
-    tests/crypto/test_crypto.cpp
-    tests/utils/test_utils.cpp
-    tests/cli/test_cli.cpp
+    tests/api/test_json_rpc_server.cpp
+    tests/crypto/test_hash.cpp
+    tests/crypto/test_signature.cpp
+    tests/crypto/test_key_pair.cpp
 )
 
-# Create test executable (exclude main.cpp)
-set(TEST_SOURCES_WITHOUT_MAIN ${SOURCES})
-list(REMOVE_ITEM TEST_SOURCES_WITHOUT_MAIN main.cpp)
-add_executable(${PROJECT_NAME}_tests ${TEST_SOURCES} ${TEST_SOURCES_WITHOUT_MAIN} ${HEADERS})
+# Create test executable
+add_executable(${PROJECT_NAME}_tests ${TEST_SOURCES} ${SOURCES} ${HEADERS})
 
 # Link libraries for tests
 target_link_libraries(${PROJECT_NAME}_tests 

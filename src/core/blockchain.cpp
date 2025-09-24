@@ -498,32 +498,141 @@ bool Blockchain::validateBlock(std::shared_ptr<Block> block) const {
 }
 
 void Blockchain::updateUTXOSet(std::shared_ptr<Block> block) {
-    // Note: In a real implementation, we would update the UTXO set
-    // This is a placeholder implementation
-    (void)block; // Suppress unused parameter warning
-    DEO_LOG_WARNING(BLOCKCHAIN, "UTXO set update not fully implemented yet");
+    if (!block) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(blockchain_mutex_);
+    
+    // Process each transaction in the block
+    for (const auto& tx : block->getTransactions()) {
+        if (!tx) continue;
+        
+        // Remove spent outputs (inputs)
+        for (const auto& input : tx->getInputs()) {
+            if (input.previous_tx_hash != "0000000000000000000000000000000000000000000000000000000000000000") {
+                // Remove from UTXO set
+                std::string utxo_key = input.previous_tx_hash + "_" + std::to_string(input.output_index);
+                auto it = utxo_set_.find(utxo_key);
+                if (it != utxo_set_.end()) {
+                    utxo_set_.erase(it);
+                }
+            }
+        }
+        
+        // Add new outputs to UTXO set
+        for (size_t i = 0; i < tx->getOutputs().size(); ++i) {
+            const auto& output = tx->getOutputs()[i];
+            std::string utxo_key = tx->getId() + "_" + std::to_string(i);
+            utxo_set_[utxo_key] = {output}; // Wrap in vector
+        }
+    }
+    
+    DEO_LOG_DEBUG(BLOCKCHAIN, "UTXO set updated for block: " + block->calculateHash());
 }
 
 void Blockchain::miningWorker() {
     DEO_LOG_DEBUG(BLOCKCHAIN, "Mining worker started");
     
     while (!stop_mining_) {
-        // Note: In a real implementation, we would mine blocks
-        // This is a placeholder implementation
-        DEO_LOG_WARNING(BLOCKCHAIN, "Mining worker not fully implemented yet");
-        
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        try {
+            // Get transactions from mempool
+            auto transactions = getMempoolTransactions(100); // Limit to 100 transactions per block
+            
+            if (!transactions.empty()) {
+                // Create new block
+                auto block = createNewBlock(transactions);
+                if (block) {
+                    // Attempt to reach consensus on the block
+                    if (consensus_engine_) {
+                        auto consensus_result = consensus_engine_->startConsensus(block);
+                        if (consensus_result.success) {
+                            // Block consensus reached, add it to the blockchain
+                            if (addBlock(block)) {
+                                DEO_LOG_INFO(BLOCKCHAIN, "Successfully reached consensus and added block: " + block->calculateHash());
+                                
+                                // Remove mined transactions from mempool
+                                for (const auto& tx : transactions) {
+                                    removeTransaction(tx->getId());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Sleep for a short time before next mining attempt
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Mining worker error: " + std::string(e.what()));
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
     }
     
     DEO_LOG_DEBUG(BLOCKCHAIN, "Mining worker finished");
 }
 
 uint32_t Blockchain::calculateNextDifficulty() const {
-    // Note: In a real implementation, we would calculate the next difficulty
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(BLOCKCHAIN, "Difficulty calculation not fully implemented yet");
+    std::lock_guard<std::mutex> lock(blockchain_mutex_);
     
-    return config_.initial_difficulty;
+    // Simple difficulty adjustment based on block time
+    if (blocks_.size() < 2) {
+        return config_.initial_difficulty;
+    }
+    
+    // Get the last two blocks for time comparison
+    auto last_block = blocks_.back();
+    auto prev_block = blocks_[blocks_.size() - 2];
+    
+    uint64_t time_diff = last_block->getHeader().timestamp - prev_block->getHeader().timestamp;
+    uint64_t target_time = 600; // 10 minutes in seconds
+    
+    uint32_t new_difficulty = config_.initial_difficulty;
+    
+    if (time_diff < target_time / 2) {
+        // Blocks are coming too fast, increase difficulty
+        new_difficulty = last_block->getHeader().difficulty * 2;
+    } else if (time_diff > target_time * 2) {
+        // Blocks are coming too slow, decrease difficulty
+        new_difficulty = last_block->getHeader().difficulty / 2;
+        if (new_difficulty < 1) new_difficulty = 1;
+    } else {
+        // Keep current difficulty
+        new_difficulty = last_block->getHeader().difficulty;
+    }
+    
+    DEO_LOG_DEBUG(BLOCKCHAIN, "Calculated next difficulty: " + std::to_string(new_difficulty));
+    return new_difficulty;
+}
+
+std::shared_ptr<Block> Blockchain::createNewBlock(const std::vector<std::shared_ptr<Transaction>>& transactions) {
+    std::lock_guard<std::mutex> lock(blockchain_mutex_);
+    
+    // Create block header
+    BlockHeader header;
+    header.version = 1;
+    header.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    header.difficulty = calculateNextDifficulty();
+    header.height = current_height_ + 1;
+    header.transaction_count = static_cast<uint32_t>(transactions.size());
+    
+    // Set previous hash
+    if (!blocks_.empty()) {
+        header.previous_hash = best_block_hash_;
+    } else {
+        header.previous_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+    }
+    
+    // Create block
+    auto block = std::make_shared<Block>(header, transactions);
+    
+    // Update Merkle root
+    block->updateMerkleRoot();
+    
+    DEO_LOG_DEBUG(BLOCKCHAIN, "Created new block with " + std::to_string(transactions.size()) + " transactions");
+    return block;
 }
 
 bool Blockchain::handleChainReorganization(std::shared_ptr<Block> new_block) {
@@ -692,20 +801,76 @@ bool Blockchain::reorganizeChain(std::shared_ptr<Block> new_best_block) {
 }
 
 bool Blockchain::validateTransactionInputs(std::shared_ptr<Transaction> transaction) const {
-    // Note: In a real implementation, we would validate transaction inputs
-    // This is a placeholder implementation
-    (void)transaction; // Suppress unused parameter warning
-    DEO_LOG_WARNING(BLOCKCHAIN, "Transaction input validation not fully implemented yet");
+    if (!transaction) {
+        return false;
+    }
     
+    std::lock_guard<std::mutex> lock(blockchain_mutex_);
+    
+    // Validate each input
+    for (const auto& input : transaction->getInputs()) {
+        // Skip coinbase transactions
+        if (input.previous_tx_hash == "0000000000000000000000000000000000000000000000000000000000000000") {
+            continue;
+        }
+        
+        // Check if the referenced output exists in UTXO set
+        std::string utxo_key = input.previous_tx_hash + "_" + std::to_string(input.output_index);
+        auto it = utxo_set_.find(utxo_key);
+        if (it == utxo_set_.end()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Transaction input references non-existent UTXO: " + utxo_key);
+            return false;
+        }
+        
+        // Verify the output is not already spent
+        // (This is a simplified check - in reality we'd need more sophisticated tracking)
+    }
+    
+    DEO_LOG_DEBUG(BLOCKCHAIN, "Transaction input validation passed");
     return true;
 }
 
 bool Blockchain::processBlockTransactions(std::shared_ptr<Block> block) {
-    // Note: In a real implementation, we would process block transactions
-    // This is a placeholder implementation
-    (void)block; // Suppress unused parameter warning
-    DEO_LOG_WARNING(BLOCKCHAIN, "Block transaction processing not fully implemented yet");
+    if (!block) {
+        return false;
+    }
     
+    std::lock_guard<std::mutex> lock(blockchain_mutex_);
+    
+    // Process each transaction in the block
+    for (const auto& tx : block->getTransactions()) {
+        if (!tx) continue;
+        
+        // Validate transaction
+        if (!tx->verify()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Invalid transaction in block: " + tx->getId());
+            return false;
+        }
+        
+        // Validate transaction inputs
+        if (!validateTransactionInputs(tx)) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Transaction input validation failed: " + tx->getId());
+            return false;
+        }
+        
+        // Update UTXO set
+        // Remove spent outputs
+        for (const auto& input : tx->getInputs()) {
+            if (input.previous_tx_hash != "0000000000000000000000000000000000000000000000000000000000000000") {
+                std::string utxo_key = input.previous_tx_hash + "_" + std::to_string(input.output_index);
+                utxo_set_.erase(utxo_key);
+            }
+        }
+        
+        // Add new outputs
+        for (size_t i = 0; i < tx->getOutputs().size(); ++i) {
+            const auto& output = tx->getOutputs()[i];
+            std::string utxo_key = tx->getId() + "_" + std::to_string(i);
+            utxo_set_[utxo_key] = {output}; // Wrap in vector
+        }
+    }
+    
+    DEO_LOG_DEBUG(BLOCKCHAIN, "Processed " + std::to_string(block->getTransactions().size()) + " transactions in block");
     return true;
 }
 

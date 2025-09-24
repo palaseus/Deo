@@ -98,6 +98,7 @@ bool TransactionFeeCalculator::isFeeSufficient(const Transaction& transaction, c
     // Calculate total input value
     uint64_t total_input_value = 0;
     for (const auto& input : transaction.getInputs()) {
+        (void)input; // Suppress unused variable warning
         // Note: TransactionInput doesn't have a value field directly
         // This would need to be calculated from the referenced output
         total_input_value += 2000000; // Placeholder value - enough to cover outputs + fees
@@ -298,7 +299,7 @@ double TransactionPriorityCalculator::calculateFeePerByte(const Transaction& tra
     return static_cast<double>(fee.total_fee) / size;
 }
 
-uint64_t TransactionPriorityCalculator::calculateAgeInBlocks(const Transaction& transaction, uint64_t current_height) const {
+uint64_t TransactionPriorityCalculator::calculateAgeInBlocks(const Transaction& /* transaction */, uint64_t /* current_height */) const {
     // Simplified age calculation - in real implementation, this would use transaction timestamp
     // For now, return a random age between 0 and 100 blocks
     std::random_device rd;
@@ -341,8 +342,8 @@ uint64_t TransactionPriorityCalculator::calculateGasUsage(const Transaction& tra
 EnhancedMempool::EnhancedMempool() 
     : fee_calculator_(std::make_unique<TransactionFeeCalculator>())
     , priority_calculator_(std::make_unique<TransactionPriorityCalculator>())
-    , total_size_bytes_(0)
-    , current_block_height_(0) {
+    , current_block_height_(0)
+    , total_size_bytes_(0) {
     
     DEO_LOG_DEBUG(BLOCKCHAIN, "Enhanced Mempool created");
 }

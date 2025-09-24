@@ -1,5 +1,6 @@
 # Build directories
 build/
+build_test/
 out/
 bin/
 lib/
@@ -112,6 +113,7 @@ test_results.json
 vm_test_results.json
 *.test
 *.benchmark
+/tmp/test_peers*.txt
 
 # Development artifacts
 debug_*

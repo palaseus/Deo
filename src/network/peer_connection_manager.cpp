@@ -83,6 +83,50 @@ bool PeerConnectionManager::initialize(const std::string& node_id, const std::st
     }
 }
 
+bool PeerConnectionManager::initializeForTesting(const std::string& node_id, const std::string& private_key) {
+    std::lock_guard<std::mutex> lock(peers_mutex_);
+    
+    if (is_initialized_) {
+        DEO_LOG_WARNING(NETWORKING, "Peer Connection Manager already initialized");
+        return true;
+    }
+    
+    try {
+        // Initialize node keypair
+        if (!private_key.empty()) {
+            node_keypair_ = std::make_unique<crypto::KeyPair>(private_key);
+        } else {
+            node_keypair_ = std::make_unique<crypto::KeyPair>();
+        }
+        
+        node_id_ = node_id;
+        
+        // Initialize peer manager
+        peer_manager_ = std::make_unique<PeerManager>();
+        if (!peer_manager_->initialize()) {
+            DEO_ERROR(NETWORKING, "Failed to initialize peer manager");
+            return false;
+        }
+        
+        // Initialize network manager with a random port to avoid conflicts
+        // Use test-friendly initialization that doesn't start background threads
+        uint16_t random_port = 8000 + (std::rand() % 1000); // Use port 8000-8999
+        network_manager_ = std::make_unique<TcpNetworkManager>(random_port);
+        if (!network_manager_->initializeForTesting()) {
+            DEO_ERROR(NETWORKING, "Failed to initialize network manager for testing on port " + std::to_string(random_port));
+            return false;
+        }
+        
+        is_initialized_ = true;
+        DEO_LOG_INFO(NETWORKING, "Peer Connection Manager initialized for testing successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_ERROR(NETWORKING, "Failed to initialize Peer Connection Manager for testing: " + std::string(e.what()));
+        return false;
+    }
+}
+
 void PeerConnectionManager::shutdown() {
     if (is_shutdown_) {
         return;

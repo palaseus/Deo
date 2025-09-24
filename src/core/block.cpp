@@ -9,10 +9,12 @@
 #include "crypto/hash.h"
 #include "utils/logger.h"
 #include "utils/error_handler.h"
+#include "vm/uint256.h"
 
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <iostream>
 
 namespace deo {
 namespace core {
@@ -50,19 +52,18 @@ bool BlockHeader::fromJson(const nlohmann::json& json) {
 }
 
 std::string BlockHeader::getSerializedData() const {
-    std::stringstream ss;
+    // Simple string concatenation to avoid stringstream issues
+    std::string result;
+    result += std::to_string(version);
+    result += previous_hash;
+    result += merkle_root;
+    result += std::to_string(timestamp);
+    result += std::to_string(nonce);
+    result += std::to_string(difficulty);
+    result += std::to_string(height);
+    result += std::to_string(transaction_count);
     
-    // Serialize in deterministic order for hashing
-    ss << std::setfill('0') << std::setw(8) << std::hex << version;
-    ss << previous_hash;
-    ss << merkle_root;
-    ss << std::setfill('0') << std::setw(16) << std::hex << timestamp;
-    ss << std::setfill('0') << std::setw(8) << std::hex << nonce;
-    ss << std::setfill('0') << std::setw(8) << std::hex << difficulty;
-    ss << std::setfill('0') << std::setw(16) << std::hex << height;
-    ss << std::setfill('0') << std::setw(8) << std::hex << transaction_count;
-    
-    return ss.str();
+    return result;
 }
 
 bool BlockHeader::validate() const {
@@ -410,18 +411,29 @@ bool Block::isGenesis() const {
 }
 
 std::chrono::system_clock::time_point Block::getTimestamp() const {
-    return std::chrono::system_clock::time_point(std::chrono::seconds(header_.timestamp));
+    return std::chrono::system_clock::time_point(std::chrono::nanoseconds(header_.timestamp));
 }
 
 void Block::setTimestamp(const std::chrono::system_clock::time_point& timestamp) {
-    header_.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+    header_.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
         timestamp.time_since_epoch()).count();
     hash_cached_ = false; // Invalidate cached hash
 }
 
 bool Block::meetsDifficultyTarget(const std::string& target_hash) const {
     std::string block_hash = calculateHash();
-    return block_hash < target_hash;
+    
+    try {
+        // Convert hex strings to uint256_t for proper numerical comparison
+        vm::uint256_t block_value(block_hash);
+        vm::uint256_t target_value(target_hash);
+        
+        
+        return block_value < target_value;
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Failed to parse difficulty target: " + std::string(e.what()));
+        return false;
+    }
 }
 
 void Block::updateHash() const {

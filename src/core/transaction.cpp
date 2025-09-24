@@ -47,10 +47,10 @@ bool TransactionInput::fromJson(const nlohmann::json& json) {
 std::string TransactionInput::getSerializedData() const {
     std::stringstream ss;
     ss << previous_tx_hash
-       << std::setfill('0') << std::setw(8) << std::hex << output_index
+       << output_index
        << signature
        << public_key
-       << std::setfill('0') << std::setw(16) << std::hex << sequence;
+       << sequence;
     return ss.str();
 }
 
@@ -80,10 +80,10 @@ bool TransactionOutput::fromJson(const nlohmann::json& json) {
 
 std::string TransactionOutput::getSerializedData() const {
     std::stringstream ss;
-    ss << std::setfill('0') << std::setw(16) << std::hex << value
+    ss << value
        << recipient_address
        << script_pubkey
-       << std::setfill('0') << std::setw(8) << std::hex << output_index;
+       << output_index;
     return ss.str();
 }
 
@@ -604,22 +604,22 @@ bool Transaction::isCoinbase() const {
 std::string Transaction::getSerializedData() const {
     std::stringstream ss;
     
-    // Serialize in deterministic order for hashing
-    ss << std::setfill('0') << std::setw(8) << std::hex << version_;
+    // Serialize in deterministic order for hashing (using decimal, not hex)
+    ss << version_;
     
     // Serialize inputs
-    ss << std::setfill('0') << std::setw(8) << std::hex << inputs_.size();
+    ss << inputs_.size();
     for (const auto& input : inputs_) {
         ss << input.getSerializedData();
     }
     
     // Serialize outputs
-    ss << std::setfill('0') << std::setw(8) << std::hex << outputs_.size();
+    ss << outputs_.size();
     for (const auto& output : outputs_) {
         ss << output.getSerializedData();
     }
     
-    ss << std::setfill('0') << std::setw(8) << std::hex << lock_time_;
+    ss << lock_time_;
     ss << static_cast<int>(type_);
     
     return ss.str();

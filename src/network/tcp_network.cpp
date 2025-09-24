@@ -220,6 +220,60 @@ bool TcpNetworkManager::initialize() {
     return true;
 }
 
+bool TcpNetworkManager::initializeForTesting() {
+    DEO_LOG_INFO(NETWORKING, "Initializing TCP network manager for testing (no background threads)");
+    
+    // Create listening socket
+    listen_socket_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_socket_ < 0) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to create listening socket");
+        return false;
+    }
+    
+    // Set socket options
+    int opt = 1;
+    if (setsockopt(listen_socket_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to set socket options");
+        close(listen_socket_);
+        return false;
+    }
+    
+    // Bind to port
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(listen_port_);
+    
+    if (bind(listen_socket_, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to bind to port " + std::to_string(listen_port_));
+        close(listen_socket_);
+        return false;
+    }
+    
+    // Start listening
+    if (listen(listen_socket_, 10) < 0) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to start listening");
+        close(listen_socket_);
+        return false;
+    }
+    
+    // Set socket to non-blocking
+    if (!setSocketNonBlocking(listen_socket_)) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to set listening socket to non-blocking");
+        close(listen_socket_);
+        return false;
+    }
+    
+    running_ = true;
+    
+    // DO NOT start background threads in test mode
+    // This prevents memory corruption in test environment
+    
+    DEO_LOG_INFO(NETWORKING, "TCP network manager initialized for testing (no background threads)");
+    return true;
+}
+
 void TcpNetworkManager::shutdown() {
     if (!running_) {
         return;

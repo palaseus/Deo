@@ -63,6 +63,7 @@ public:
     ~TcpNetworkManager();
 
     bool initialize();
+    bool initializeForTesting(); // Test mode without background threads
     void shutdown();
     
     // Peer management

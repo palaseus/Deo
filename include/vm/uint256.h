@@ -196,6 +196,14 @@ public:
     std::string toString() const;
     
     /**
+     * @brief Stream output operator
+     * @param os Output stream
+     * @param value uint256_t value
+     * @return Reference to output stream
+     */
+    friend std::ostream& operator<<(std::ostream& os, const uint256_t& value);
+    
+    /**
      * @brief Get as byte array
      * @return Byte array (32 bytes)
      */

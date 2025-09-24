@@ -532,7 +532,7 @@ void FastSyncManager::headerDownloadWorker() {
         
         // Update statistics
         {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
+            std::lock_guard<std::mutex> stats_lock(stats_mutex_);
             stats_.headers_downloaded++;
         }
     }
@@ -554,7 +554,7 @@ void FastSyncManager::blockDownloadWorker() {
         
         // Update statistics
         {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
+            std::lock_guard<std::mutex> stats_lock(stats_mutex_);
             stats_.blocks_downloaded++;
         }
     }

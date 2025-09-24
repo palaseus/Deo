@@ -61,19 +61,19 @@ struct TransactionReceipt {
                       uint32_t tx_idx,
                       const std::string& from,
                       const std::string& to,
-                      uint64_t gas_used,
-                      uint64_t gas_price,
-                      bool success)
+                      uint64_t gas_used_param,
+                      uint64_t gas_price_param,
+                      bool success_param)
         : transaction_hash(tx_hash)
         , block_hash(blk_hash)
         , block_number(blk_num)
         , transaction_index(tx_idx)
         , from_address(from)
         , to_address(to)
-        , gas_used(gas_used)
-        , gas_price(gas_price)
+        , gas_used(gas_used_param)
+        , gas_price(gas_price_param)
         , cumulative_gas_used(0)
-        , success(success)
+        , success(success_param)
         , timestamp(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()) {}
     

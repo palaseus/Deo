@@ -8,6 +8,7 @@
 #include "consensus/proof_of_work.h"
 #include "crypto/hash.h"
 #include "utils/logger.h"
+#include "vm/uint256.h"
 #include "utils/error_handler.h"
 
 #include <random>
@@ -201,6 +202,10 @@ std::string ProofOfWork::calculateTargetHash(uint32_t difficulty) const {
         for (size_t i = 0; i < leading_zeros; ++i) {
             target[i] = '0';
         }
+        // Set the character after the leading zeros to 'f' to make it a valid target
+        if (leading_zeros < 64) {
+            target[leading_zeros] = 'f';
+        }
     }
     
     return target;
@@ -208,7 +213,16 @@ std::string ProofOfWork::calculateTargetHash(uint32_t difficulty) const {
 
 bool ProofOfWork::meetsDifficultyTarget(const std::string& hash, uint32_t difficulty) const {
     std::string target_hash = calculateTargetHash(difficulty);
-    return hash < target_hash;
+    
+    // Convert hex strings to uint256_t for proper numerical comparison
+    try {
+        vm::uint256_t hash_value(hash);
+        vm::uint256_t target_value(target_hash);
+        return hash_value <= target_value;
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(CONSENSUS, "Failed to parse hash for difficulty comparison: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool ProofOfWork::mineBlock(std::shared_ptr<core::Block> block, uint64_t max_nonce) {
@@ -229,13 +243,23 @@ bool ProofOfWork::mineBlock(std::shared_ptr<core::Block> block, uint64_t max_non
         total_hashes_++;
         hash_count_++;
         
-        if (block_hash < target_hash) {
+        // Debug output for first few attempts
+        if (nonce < 10) {
+            DEO_LOG_DEBUG(CONSENSUS, "Nonce " + std::to_string(nonce) + " hash: " + block_hash);
+        }
+        
+        if (meetsDifficultyTarget(block_hash, current_difficulty_)) {
             // Found a valid hash
             block->setNonce(nonce);
             blocks_mined_++;
             
             DEO_LOG_INFO(CONSENSUS, "Block mined successfully with nonce: " + std::to_string(nonce));
             return true;
+        }
+        
+        // Debug: Check if we're close to finding a valid hash
+        if (nonce < 100 && block_hash[0] == '0') {
+            DEO_LOG_DEBUG(CONSENSUS, "Found hash starting with 0 at nonce " + std::to_string(nonce) + ": " + block_hash);
         }
         
         nonce++;

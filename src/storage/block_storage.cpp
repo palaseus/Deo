@@ -138,7 +138,10 @@ uint64_t BlockStorage::getHeight() const {
     // Find the maximum height key
     auto it = std::max_element(height_to_hash_.begin(), height_to_hash_.end(),
         [](const auto& a, const auto& b) { return a.first < b.first; });
-    return it->first;
+    if (it != height_to_hash_.end()) {
+        return it->first;
+    }
+    return 0;
 }
 
 bool BlockStorage::hasBlock(const std::string& hash) const {
@@ -252,21 +255,93 @@ bool BlockStorage::restore(const std::string& backup_path) {
 bool BlockStorage::loadBlocks() {
     DEO_LOG_DEBUG(STORAGE, "Loading blocks from disk");
     
-    // Note: In a real implementation, we would load blocks from disk
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(STORAGE, "Block loading not fully implemented yet");
-    
-    return true;
+    try {
+        // Load block index
+        std::string index_file = data_directory_ + "/block_index.json";
+        if (std::filesystem::exists(index_file)) {
+            std::ifstream file(index_file);
+            if (file.is_open()) {
+                nlohmann::json index_json;
+                file >> index_json;
+                file.close();
+                
+                // Load each block
+                for (const auto& [height_str, hash] : index_json.items()) {
+                    std::string block_file = data_directory_ + "/blocks/" + hash.get<std::string>() + ".json";
+                    
+                    if (std::filesystem::exists(block_file)) {
+                        std::ifstream block_file_stream(block_file);
+                        if (block_file_stream.is_open()) {
+                            nlohmann::json block_json;
+                            block_file_stream >> block_json;
+                            block_file_stream.close();
+                            
+                            auto block = std::make_shared<core::Block>();
+                            if (block->fromJson(block_json)) {
+                                block_cache_[hash] = block;
+                                // Note: height_index_ not available in this context
+                                // This would need to be implemented in the header
+                            }
+                        }
+                    }
+                }
+                
+                DEO_LOG_INFO(STORAGE, "Loaded " + std::to_string(block_cache_.size()) + " blocks from disk");
+                return true;
+            }
+        }
+        
+        DEO_LOG_DEBUG(STORAGE, "No existing blocks found, starting fresh");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(STORAGE, "Failed to load blocks: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool BlockStorage::saveBlocks() {
     DEO_LOG_DEBUG(STORAGE, "Saving blocks to disk");
     
-    // Note: In a real implementation, we would save blocks to disk
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(STORAGE, "Block saving not fully implemented yet");
-    
-    return true;
+    try {
+        // Create blocks directory if it doesn't exist
+        std::string blocks_dir = data_directory_ + "/blocks";
+        if (!std::filesystem::exists(blocks_dir)) {
+            std::filesystem::create_directories(blocks_dir);
+        }
+        
+        // Save each block
+        for (const auto& [hash, block] : block_cache_) {
+            std::string block_file = blocks_dir + "/" + hash + ".json";
+            std::ofstream file(block_file);
+            if (file.is_open()) {
+                nlohmann::json block_json = block->toJson();
+                file << block_json.dump(2);
+                file.close();
+            }
+        }
+        
+        // Save block index
+        std::string index_file = data_directory_ + "/block_index.json";
+        std::ofstream index_stream(index_file);
+        if (index_stream.is_open()) {
+            nlohmann::json index_json;
+            // Note: height_index_ not available in this context
+            // This would need to be implemented in the header
+            for (const auto& [hash, block] : block_cache_) {
+                index_json[std::to_string(block->getHeader().height)] = hash;
+            }
+            index_stream << index_json.dump(2);
+            index_stream.close();
+        }
+        
+        DEO_LOG_DEBUG(STORAGE, "Saved " + std::to_string(block_cache_.size()) + " blocks to disk");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(STORAGE, "Failed to save blocks: " + std::string(e.what()));
+        return false;
+    }
 }
 
 std::string BlockStorage::getBlockFilePath(const std::string& hash) const {

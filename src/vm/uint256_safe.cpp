@@ -11,12 +11,14 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cassert>
-#include <iostream>
 
 namespace deo {
 namespace vm {
 
-// Constructor implementation is in header file
+// Safe constructor with bounds checking
+uint256_t::uint256_t(uint64_t value) : data_{0} {
+    data_[0] = value;
+}
 
 uint256_t::uint256_t(const std::string& hex_string) : data_{0} {
     if (hex_string.empty()) return;
@@ -47,8 +49,8 @@ uint256_t::uint256_t(const std::string& hex_string) : data_{0} {
         try {
             uint8_t byte_val = static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16));
             
-        int word_idx = static_cast<int>((63 - i) / 16);  // Which 64-bit word
-        int byte_idx = static_cast<int>(((63 - i) % 16) / 2);  // Which byte in the word
+            int word_idx = (63 - i) / 16;  // Which 64-bit word
+            int byte_idx = ((63 - i) % 16) / 2;  // Which byte in the word
             
             if (word_idx >= 0 && word_idx < 4 && byte_idx >= 0 && byte_idx < 8) {
                 data_[word_idx] |= (static_cast<uint64_t>(byte_val) << (byte_idx * 8));
@@ -61,8 +63,8 @@ uint256_t::uint256_t(const std::string& hex_string) : data_{0} {
 
 uint256_t::uint256_t(const std::array<uint8_t, 32>& bytes) : data_{0} {
     for (int i = 0; i < 32; ++i) {
-        int word_idx = static_cast<int>(i / 8);
-        int byte_idx = static_cast<int>(i % 8);
+        int word_idx = i / 8;
+        int byte_idx = i % 8;
         data_[word_idx] |= (static_cast<uint64_t>(bytes[i]) << (byte_idx * 8));
     }
 }
@@ -167,22 +169,36 @@ uint256_t uint256_t::operator/(const uint256_t& other) const {
         return *this;
     }
     
-    // Simple division for small numbers
-    if (*this <= uint256_t(1000000) && other <= uint256_t(1000000)) {
-        uint64_t this_val = static_cast<uint64_t>(data_[0]);
-        uint64_t other_val = static_cast<uint64_t>(other.data_[0]);
-        if (other_val != 0) {
-            return uint256_t(this_val / other_val);
+    // Use binary search for division to avoid infinite loops
+    uint256_t low(0);
+    uint256_t high = *this;
+    uint256_t result(0);
+    int iterations = 0;
+    const int max_iterations = 256;  // Prevent infinite loops
+    
+    while (low <= high && iterations < max_iterations) {
+        uint256_t mid = low + (high - low) / uint256_t(2);
+        
+        try {
+            uint256_t product = mid * other;
+            
+            if (product == *this) {
+                return mid;
+            } else if (product < *this) {
+                result = mid;
+                low = mid + uint256_t(1);
+            } else {
+                high = mid - uint256_t(1);
+            }
+        } catch (const std::overflow_error&) {
+            high = mid - uint256_t(1);
         }
+        
+        iterations++;
     }
     
-    // For larger numbers, use a simple iterative approach
-    uint256_t result(0);
-    uint256_t remainder = *this;
-    
-    while (remainder >= other) {
-        remainder = remainder - other;
-        result = result + uint256_t(1);
+    if (iterations >= max_iterations) {
+        throw std::runtime_error("Division algorithm exceeded maximum iterations");
     }
     
     return result;
@@ -357,36 +373,21 @@ std::string uint256_t::toString() const {
     return ss.str();
 }
 
-// Stream output operator
-std::ostream& operator<<(std::ostream& os, const uint256_t& value) {
-    os << value.toString();
-    return os;
-}
-
-// toDecimalString method not implemented in header
-
-void uint256_t::setByte(int pos, uint8_t value) {
-    if (pos < 0 || pos >= 32) {
-        throw std::out_of_range("Byte position out of range");
+std::string uint256_t::toDecimalString() const {
+    if (isZero()) {
+        return "0";
     }
     
-    int word_idx = pos / 8;
-    int byte_idx = pos % 8;
+    std::string result = "0";
+    uint256_t temp = *this;
     
-    // Clear the byte and set the new value
-    data_[word_idx] &= ~(0xFFULL << (byte_idx * 8));
-    data_[word_idx] |= (static_cast<uint64_t>(value) << (byte_idx * 8));
-}
-
-uint8_t uint256_t::getByte(int pos) const {
-    if (pos < 0 || pos >= 32) {
-        throw std::out_of_range("Byte position out of range");
+    while (!temp.isZero()) {
+        uint256_t remainder = temp % uint256_t(10);
+        result = std::to_string(remainder.toUint64()) + result;
+        temp = temp / uint256_t(10);
     }
     
-    int word_idx = pos / 8;
-    int byte_idx = pos % 8;
-    
-    return static_cast<uint8_t>((data_[word_idx] >> (byte_idx * 8)) & 0xFF);
+    return result;
 }
 
 } // namespace vm

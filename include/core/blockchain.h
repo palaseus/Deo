@@ -325,6 +325,13 @@ private:
     std::shared_ptr<Block> createGenesisBlock();
     
     /**
+     * @brief Create a new block with given transactions
+     * @param transactions Vector of transactions to include in the block
+     * @return New block
+     */
+    std::shared_ptr<Block> createNewBlock(const std::vector<std::shared_ptr<Transaction>>& transactions);
+    
+    /**
      * @brief Validate a block before adding it to the chain
      * @param block Block to validate
      * @return True if the block is valid

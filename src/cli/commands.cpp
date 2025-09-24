@@ -1670,12 +1670,25 @@ int Commands::broadcastBlock(const CommandResult& result) {
         std::string block_hash = it->second;
         std::cout << "Broadcasting block: " << block_hash << std::endl;
         
-        // TODO: Implement actual block broadcasting
-        // This would involve:
-        // 1. Get block from blockchain
-        // 2. Create BLOCK message
-        // 3. Send to all connected peers
-        // 4. Track propagation status
+        // Get block from blockchain
+        if (!blockchain_) {
+            std::cout << "❌ Blockchain not initialized" << std::endl;
+            return 1;
+        }
+        
+        auto block = blockchain_->getBlock(block_hash);
+        if (!block) {
+            std::cout << "❌ Block not found: " << block_hash << std::endl;
+            return 1;
+        }
+        
+        // Create BLOCK message
+        auto block_message = std::make_shared<network::BlockMessage>();
+        block_message->block_ = block;
+        
+        // Send to all connected peers (placeholder - would need proper network manager integration)
+        DEO_LOG_DEBUG(CLI, "Block broadcast prepared for: " + block_hash);
+        std::cout << "✅ Block broadcast prepared for: " << block_hash << std::endl;
         
         std::cout << "✅ Block broadcast initiated successfully!" << std::endl;
         std::cout << "   Note: Full P2P networking implementation in progress" << std::endl;
@@ -1693,13 +1706,18 @@ int Commands::syncChain(const CommandResult& /* result */) {
     try {
         std::cout << "Starting blockchain synchronization..." << std::endl;
         
-        // TODO: Implement actual chain synchronization
-        // This would involve:
-        // 1. Get current chain height
-        // 2. Request blocks from peers
-        // 3. Validate received blocks
-        // 4. Update local chain
-        // 5. Handle forks if necessary
+        // Get current chain height
+        if (!blockchain_) {
+            std::cout << "❌ Blockchain not initialized" << std::endl;
+            return 1;
+        }
+        
+        uint64_t current_height = blockchain_->getHeight();
+        std::cout << "Current chain height: " << current_height << std::endl;
+        
+        // Request blocks from peers (placeholder - would need proper network manager integration)
+        DEO_LOG_DEBUG(CLI, "Chain synchronization prepared for height: " + std::to_string(current_height));
+        std::cout << "✅ Chain synchronization prepared for height: " << current_height << std::endl;
         
         std::cout << "✅ Chain synchronization initiated successfully!" << std::endl;
         std::cout << "   Note: Full P2P networking implementation in progress" << std::endl;

@@ -385,6 +385,21 @@ private:
      */
     void updateStats(uint64_t bytes_sent, uint64_t bytes_received,
                     uint64_t messages_sent, uint64_t messages_received);
+    
+    /**
+     * @brief Check if we have an item (block or transaction)
+     * @param hash Item hash
+     * @return True if we have the item
+     */
+    bool hasItem(const std::string& hash) const;
+    
+    /**
+     * @brief Request an item from a peer
+     * @param peer_address Peer address
+     * @param peer_port Peer port
+     * @param item_hash Hash of item to request
+     */
+    void requestItem(const std::string& peer_address, uint16_t peer_port, const std::string& item_hash);
 };
 
 } // namespace network

@@ -54,7 +54,7 @@ struct BlockHeader {
      */
     BlockHeader(uint32_t ver, 
                const std::string& prev_hash,
-               const std::string& merkle_root,
+               const std::string& merkle_root_param,
                uint64_t ts,
                uint32_t n,
                uint32_t diff,
@@ -62,7 +62,7 @@ struct BlockHeader {
                uint32_t tx_count = 0)
         : version(ver)
         , previous_hash(prev_hash)
-        , merkle_root(merkle_root)
+        , merkle_root(merkle_root_param)
         , timestamp(ts)
         , nonce(n)
         , difficulty(diff)
