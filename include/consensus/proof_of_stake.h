@@ -107,6 +107,26 @@ public:
     ConsensusResult startConsensus(std::shared_ptr<core::Block> block) override;
     std::string getStatistics() const override;
     
+    /**
+     * @brief Check if validator is valid and active
+     * @param validator_address Address of validator
+     * @return True if validator is valid and active
+     */
+    bool isValidValidator(const std::string& validator_address) const;
+    
+    /**
+     * @brief Check if validator has minimum stake
+     * @param validator_address Address of validator
+     * @return True if validator has minimum stake
+     */
+    bool hasMinimumStake(const std::string& validator_address) const;
+    
+    /**
+     * @brief Check if currently mining
+     * @return True if currently mining
+     */
+    bool isMining() const;
+    
     // Proof-of-Stake specific methods
     
     /**

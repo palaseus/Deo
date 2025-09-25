@@ -196,6 +196,18 @@ public:
     std::vector<std::string> getSnapshots() const;
     
     /**
+     * @brief Load state from disk
+     * @return True if loading was successful
+     */
+    bool loadState();
+    
+    /**
+     * @brief Save state to disk
+     * @return True if saving was successful
+     */
+    bool saveState();
+    
+    /**
      * @brief Compact the storage
      * @return True if compaction was successful
      */
@@ -219,18 +231,6 @@ private:
     std::string data_directory_;                                    ///< Data directory path
     std::unordered_map<std::string, std::shared_ptr<AccountState>> account_cache_; ///< Account cache
     mutable std::mutex storage_mutex_;                             ///< Mutex for thread safety
-    
-    /**
-     * @brief Load state from disk
-     * @return True if loading was successful
-     */
-    bool loadState();
-    
-    /**
-     * @brief Save state to disk
-     * @return True if saving was successful
-     */
-    bool saveState();
     
     /**
      * @brief Get account file path

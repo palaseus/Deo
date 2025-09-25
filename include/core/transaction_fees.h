@@ -108,6 +108,7 @@ public:
     
     // Fee calculation
     TransactionFee calculateFee(const Transaction& transaction, const FeeParameters& params) const;
+    uint64_t calculateInputValueFromUTXO(const Transaction& transaction) const;
     uint64_t calculateBaseFee(const Transaction& transaction, uint64_t fee_per_byte) const;
     uint64_t calculateGasFee(const Transaction& transaction, uint64_t gas_price) const;
     uint64_t calculatePriorityFee(const Transaction& transaction, uint64_t multiplier) const;

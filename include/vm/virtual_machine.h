@@ -24,6 +24,9 @@ namespace vm {
  * @brief VM instruction opcodes
  */
 enum class Opcode : uint8_t {
+    // Control flow
+    STOP = 0x00,
+    
     // Stack operations
     PUSH0 = 0x5F,
     PUSH1 = 0x60,
@@ -267,6 +270,13 @@ public:
      * @return True if valid
      */
     bool validateBytecode(const std::vector<uint8_t>& code) const;
+    
+    /**
+     * @brief Check if opcode is valid
+     * @param opcode Opcode to check
+     * @return True if valid
+     */
+    bool isValidOpcode(Opcode opcode) const;
     
     /**
      * @brief Get VM statistics

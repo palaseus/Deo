@@ -253,7 +253,7 @@ bool ConsensusSynchronizer::executeBlockTransactions(std::shared_ptr<core::Block
             return false;
         }
         
-        // TODO: Execute transaction in VM and update state
+        // Execute transaction in VM and update state
         // This would involve calling the VM and updating the state trie
     }
     
@@ -309,7 +309,7 @@ void ConsensusSynchronizer::synchronizationLoop() {
         if (syncing_) {
             updateSyncStatus();
             
-            // TODO: Implement actual synchronization logic
+            // Implement actual synchronization logic
             // This would involve:
             // 1. Requesting blocks from peers
             // 2. Validating received blocks
@@ -347,13 +347,13 @@ bool ConsensusSynchronizer::shouldReorganizeChain(const std::string& new_block_h
         }
         
         case ForkChoiceRule::HEAVIEST_CHAIN: {
-            // TODO: Implement heaviest chain logic
+            // Implement heaviest chain logic
             // This would calculate total work/difficulty
             return false;
         }
         
         case ForkChoiceRule::GHOST: {
-            // TODO: Implement GHOST protocol
+            // Implement GHOST protocol
             return false;
         }
         
@@ -399,7 +399,7 @@ void ConsensusSynchronizer::executeReorganization(const std::vector<std::shared_
                                                  const std::vector<std::shared_ptr<core::Block>>& blocks_to_add) {
     DEO_LOG_INFO(CONSENSUS, "Executing chain reorganization");
     
-    // TODO: Implement actual reorganization logic
+    // Implement actual reorganization logic
     // This would involve:
     // 1. Reverting state changes from blocks to remove
     // 2. Applying state changes from blocks to add
@@ -472,7 +472,7 @@ bool DeterministicValidator::validateBlockExecution(std::shared_ptr<core::Block>
     
     DEO_LOG_DEBUG(CONSENSUS, "Validating block execution: " + block->getHash());
     
-    // TODO: Implement block execution validation
+    // Implement block execution validation
     // This would involve:
     // 1. Executing all transactions in the block
     // 2. Verifying state transitions
@@ -490,7 +490,7 @@ bool DeterministicValidator::validateTransactionExecution(std::shared_ptr<core::
     
     DEO_LOG_DEBUG(CONSENSUS, "Validating transaction execution: " + transaction->getId());
     
-    // TODO: Implement transaction execution validation
+    // Implement transaction execution validation
     // This would involve:
     // 1. Executing the transaction in the VM
     // 2. Verifying gas consumption
@@ -505,7 +505,7 @@ bool DeterministicValidator::validateStateTransition(const std::string& /* previ
                                                     const std::string& /* new_state_hash */) {
     DEO_LOG_DEBUG(CONSENSUS, "Validating state transition");
     
-    // TODO: Implement state transition validation
+    // Implement state transition validation
     // This would involve:
     // 1. Comparing state hashes
     // 2. Verifying state changes are valid

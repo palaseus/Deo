@@ -271,6 +271,12 @@ public:
     MiningStats getMiningStats() const;
     
     /**
+     * @brief Calculate current hash rate
+     * @return Hash rate in hashes per second
+     */
+    uint64_t calculateHashRate() const;
+    
+    /**
      * @brief Save the blockchain state to disk
      * @return True if save was successful
      */
@@ -317,6 +323,9 @@ private:
     std::thread mining_thread_;                                 ///< Mining thread
     std::atomic<bool> stop_mining_;                             ///< Stop mining flag
     MiningStats mining_stats_;                                  ///< Mining statistics
+    std::atomic<uint64_t> blocks_mined_count_;                  ///< Number of blocks mined
+    std::atomic<uint64_t> total_hashes_count_;                  ///< Total number of hashes computed
+    std::chrono::system_clock::time_point mining_start_time_;   ///< Mining start time
     
     /**
      * @brief Create the genesis block

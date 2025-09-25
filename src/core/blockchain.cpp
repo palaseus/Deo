@@ -26,7 +26,10 @@ Blockchain::Blockchain(const BlockchainConfig& config)
     , is_mining_(false)
     , current_height_(0)
     , total_difficulty_(0)
-    , stop_mining_(false) {
+    , stop_mining_(false)
+    , blocks_mined_count_(0)
+    , total_hashes_count_(0)
+    , mining_start_time_(std::chrono::system_clock::now()) {
     
     DEO_LOG_DEBUG(BLOCKCHAIN, "Blockchain created with config: " + config.network_id);
 }
@@ -132,7 +135,11 @@ BlockchainState Blockchain::getState() const {
     state.height = current_height_;
     state.best_block_hash = best_block_hash_;
     state.genesis_hash = blocks_.empty() ? "" : blocks_[0]->calculateHash();
-    state.total_transactions = 0; // Placeholder
+    // Calculate total transactions across all blocks
+    state.total_transactions = 0;
+    for (const auto& block : blocks_) {
+        state.total_transactions += block->getTransactions().size();
+    }
     state.total_blocks = blocks_.size();
     state.total_difficulty = total_difficulty_;
     state.last_block_time = std::chrono::system_clock::now();
@@ -170,6 +177,26 @@ bool Blockchain::addBlock(std::shared_ptr<Block> block) {
         // If it's not a reorganization, check if it extends the current chain
         auto current_best = getBestBlock();
         if (current_best && block->getPreviousHash() == current_best->getHash()) {
+            // Validate block height and timestamp
+            if (block->getHeader().height != current_best->getHeader().height + 1) {
+                DEO_ERROR(BLOCKCHAIN, "Invalid block height. Expected: " + 
+                         std::to_string(current_best->getHeader().height + 1) + 
+                         ", Got: " + std::to_string(block->getHeader().height));
+                return false;
+            }
+            
+            // Validate timestamp (must be after previous block)
+            if (block->getHeader().timestamp <= current_best->getHeader().timestamp) {
+                DEO_ERROR(BLOCKCHAIN, "Block timestamp must be after previous block");
+                return false;
+            }
+            
+            // Process block transactions
+            if (!processBlockTransactions(block)) {
+                DEO_ERROR(BLOCKCHAIN, "Failed to process block transactions");
+                return false;
+            }
+            
             // Block extends current chain
             blocks_.push_back(block);
             block_index_[block->calculateHash()] = block;
@@ -184,7 +211,17 @@ bool Blockchain::addBlock(std::shared_ptr<Block> block) {
             
             // Store block
             if (block_storage_) {
-                block_storage_->storeBlock(block);
+                if (!block_storage_->storeBlock(block)) {
+                    DEO_ERROR(BLOCKCHAIN, "Failed to store block");
+                    return false;
+                }
+            }
+            
+            // Remove transactions from mempool
+            for (const auto& tx : block->getTransactions()) {
+                if (tx->getType() != Transaction::Type::COINBASE) {
+                    mempool_.erase(tx->getId());
+                }
             }
             
             DEO_LOG_INFO(BLOCKCHAIN, "Block added successfully: " + block->calculateHash());
@@ -249,9 +286,21 @@ bool Blockchain::addTransaction(std::shared_ptr<Transaction> transaction) {
     
     DEO_LOG_DEBUG(BLOCKCHAIN, "Adding transaction to mempool: " + transaction->getId());
     
-    // Validate transaction
+    // Check if transaction already exists in mempool
+    if (mempool_.find(transaction->getId()) != mempool_.end()) {
+        DEO_LOG_DEBUG(BLOCKCHAIN, "Transaction already in mempool: " + transaction->getId());
+        return true;
+    }
+    
+    // Validate transaction structure
+    if (!transaction->validate()) {
+        DEO_ERROR(BLOCKCHAIN, "Transaction structure validation failed");
+        return false;
+    }
+    
+    // Validate transaction signatures
     if (!transaction->verify()) {
-        DEO_ERROR(BLOCKCHAIN, "Transaction validation failed");
+        DEO_ERROR(BLOCKCHAIN, "Transaction signature validation failed");
         return false;
     }
     
@@ -259,6 +308,21 @@ bool Blockchain::addTransaction(std::shared_ptr<Transaction> transaction) {
     if (!validateTransactionInputs(transaction)) {
         DEO_ERROR(BLOCKCHAIN, "Transaction input validation failed");
         return false;
+    }
+    
+    // Check transaction size limits
+    if (transaction->getSize() > config_.max_block_size) {
+        DEO_ERROR(BLOCKCHAIN, "Transaction size exceeds limit");
+        return false;
+    }
+    
+    // Check mempool size limits
+    if (mempool_.size() >= 10000) { // Configurable limit
+        DEO_WARNING(BLOCKCHAIN, "Mempool size limit reached, removing oldest transaction");
+        // Remove oldest transaction (simple FIFO for now)
+        if (!mempool_.empty()) {
+            mempool_.erase(mempool_.begin());
+        }
     }
     
     // Add to mempool
@@ -410,10 +474,12 @@ bool Blockchain::isMining() const {
 
 Blockchain::MiningStats Blockchain::getMiningStats() const {
     MiningStats stats;
-    stats.blocks_mined = 0; // Placeholder
-    stats.hashes_per_second = 0; // Placeholder
-    stats.total_hashes = 0; // Placeholder
-    stats.start_time = std::chrono::system_clock::now();
+    
+    // Calculate actual mining statistics
+    stats.blocks_mined = blocks_mined_count_;
+    stats.hashes_per_second = calculateHashRate();
+    stats.total_hashes = total_hashes_count_;
+    stats.start_time = mining_start_time_;
     
     return stats;
 }
@@ -421,41 +487,190 @@ Blockchain::MiningStats Blockchain::getMiningStats() const {
 bool Blockchain::saveState() {
     DEO_LOG_INFO(BLOCKCHAIN, "Saving blockchain state");
     
-    // Note: In a real implementation, we would save the blockchain state
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(BLOCKCHAIN, "State saving not fully implemented yet");
-    
-    return true;
+    try {
+        // Save blockchain state to storage
+        if (block_storage_) {
+            // Save all blocks
+            for (const auto& block : blocks_) {
+                if (!block_storage_->storeBlock(block)) {
+                    DEO_LOG_ERROR(BLOCKCHAIN, "Failed to store block: " + block->calculateHash());
+                    return false;
+                }
+            }
+        }
+        
+        if (state_storage_) {
+            // Save state information
+            if (!state_storage_->saveState()) {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Failed to save state");
+                return false;
+            }
+        }
+        
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain state saved successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Failed to save state: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool Blockchain::loadState() {
     DEO_LOG_INFO(BLOCKCHAIN, "Loading blockchain state");
     
-    // Note: In a real implementation, we would load the blockchain state
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(BLOCKCHAIN, "State loading not fully implemented yet");
-    
-    return true;
+    try {
+        // Load blockchain state from storage
+        if (block_storage_) {
+            // Load all blocks from storage
+            auto loaded_blocks = block_storage_->loadAllBlocks();
+            if (!loaded_blocks.empty()) {
+                blocks_ = loaded_blocks;
+                
+                // Rebuild block index
+                block_index_.clear();
+                for (const auto& block : blocks_) {
+                    block_index_[block->calculateHash()] = block;
+                }
+                
+                // Update state
+                if (!blocks_.empty()) {
+                    current_height_ = blocks_.back()->getHeader().height;
+                    best_block_hash_ = blocks_.back()->calculateHash();
+                    
+                    // Calculate total difficulty
+                    total_difficulty_ = 0;
+                    for (const auto& block : blocks_) {
+                        total_difficulty_ += block->getHeader().difficulty;
+                    }
+                }
+                
+                DEO_LOG_INFO(BLOCKCHAIN, "Loaded " + std::to_string(blocks_.size()) + " blocks from storage");
+            }
+        }
+        
+        if (state_storage_) {
+            // Load state information
+            if (!state_storage_->loadState()) {
+                DEO_LOG_WARNING(BLOCKCHAIN, "Failed to load state, starting fresh");
+            }
+        }
+        
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain state loaded successfully");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Failed to load state: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool Blockchain::exportBlockchain(const std::string& filename) const {
     DEO_LOG_INFO(BLOCKCHAIN, "Exporting blockchain to: " + filename);
     
-    // Note: In a real implementation, we would export the blockchain
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(BLOCKCHAIN, "Blockchain export not fully implemented yet");
-    
-    return true;
+    try {
+        std::ofstream file(filename, std::ios::binary);
+        if (!file.is_open()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Failed to open file for export: " + filename);
+            return false;
+        }
+        
+        // Write blockchain data
+        uint64_t block_count = blocks_.size();
+        file.write(reinterpret_cast<const char*>(&block_count), sizeof(block_count));
+        
+        for (const auto& block : blocks_) {
+            // Serialize block data
+            auto block_data = block->serialize();
+            uint64_t block_size = block_data.size();
+            file.write(reinterpret_cast<const char*>(&block_size), sizeof(block_size));
+            file.write(reinterpret_cast<const char*>(block_data.data()), block_size);
+        }
+        
+        file.close();
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain exported successfully to: " + filename);
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Failed to export blockchain: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool Blockchain::importBlockchain(const std::string& filename) {
     DEO_LOG_INFO(BLOCKCHAIN, "Importing blockchain from: " + filename);
     
-    // Note: In a real implementation, we would import the blockchain
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(BLOCKCHAIN, "Blockchain import not fully implemented yet");
-    
-    return true;
+    try {
+        std::ifstream file(filename, std::ios::binary);
+        if (!file.is_open()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Failed to open file for import: " + filename);
+            return false;
+        }
+        
+        // Read blockchain data
+        uint64_t block_count;
+        file.read(reinterpret_cast<char*>(&block_count), sizeof(block_count));
+        
+        std::vector<std::shared_ptr<Block>> imported_blocks;
+        imported_blocks.reserve(block_count);
+        
+        for (uint64_t i = 0; i < block_count; ++i) {
+            uint64_t block_size;
+            file.read(reinterpret_cast<char*>(&block_size), sizeof(block_size));
+            
+            std::vector<uint8_t> block_data(block_size);
+            file.read(reinterpret_cast<char*>(block_data.data()), block_size);
+            
+            // Deserialize block
+            auto block = std::make_shared<Block>();
+            if (!block->deserialize(block_data)) {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Failed to deserialize block");
+                return false;
+            }
+            if (block) {
+                imported_blocks.push_back(block);
+            } else {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Failed to deserialize block " + std::to_string(i));
+                return false;
+            }
+        }
+        
+        file.close();
+        
+        // Validate imported blocks
+        for (const auto& block : imported_blocks) {
+            if (!validateBlock(block)) {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Invalid block in import: " + block->calculateHash());
+                return false;
+            }
+        }
+        
+        // Replace current blockchain with imported one
+        blocks_ = imported_blocks;
+        block_index_.clear();
+        for (const auto& block : blocks_) {
+            block_index_[block->calculateHash()] = block;
+        }
+        
+        // Update state
+        if (!blocks_.empty()) {
+            current_height_ = blocks_.back()->getHeader().height;
+            best_block_hash_ = blocks_.back()->calculateHash();
+            
+            // Calculate total difficulty
+            total_difficulty_ = 0;
+            for (const auto& block : blocks_) {
+                total_difficulty_ += block->getHeader().difficulty;
+            }
+        }
+        
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain imported successfully from: " + filename);
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Failed to import blockchain: " + std::string(e.what()));
+        return false;
+    }
 }
 
 std::shared_ptr<Block> Blockchain::createGenesisBlock() {
@@ -872,6 +1087,21 @@ bool Blockchain::processBlockTransactions(std::shared_ptr<Block> block) {
     
     DEO_LOG_DEBUG(BLOCKCHAIN, "Processed " + std::to_string(block->getTransactions().size()) + " transactions in block");
     return true;
+}
+
+uint64_t Blockchain::calculateHashRate() const {
+    if (!is_mining_) {
+        return 0;
+    }
+    
+    auto now = std::chrono::system_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - mining_start_time_);
+    
+    if (duration.count() == 0) {
+        return 0;
+    }
+    
+    return total_hashes_count_ / duration.count();
 }
 
 } // namespace core

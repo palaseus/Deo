@@ -39,7 +39,15 @@ struct BlockHeader {
     /**
      * @brief Default constructor
      */
-    BlockHeader() = default;
+    BlockHeader() 
+        : version(1)
+        , previous_hash("0000000000000000000000000000000000000000000000000000000000000000")
+        , merkle_root("0000000000000000000000000000000000000000000000000000000000000000")
+        , timestamp(0)
+        , nonce(0)
+        , difficulty(1)
+        , height(0)
+        , transaction_count(0) {}
     
     /**
      * @brief Constructor with parameters

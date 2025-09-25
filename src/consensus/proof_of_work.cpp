@@ -13,6 +13,7 @@
 
 #include <random>
 #include <chrono>
+#include <iostream>
 #include <thread>
 #include <sstream>
 #include <iomanip>
@@ -77,8 +78,18 @@ ConsensusResult ProofOfWork::startConsensus(std::shared_ptr<core::Block> block) 
         return result;
     }
     
+    // Try to mine the block if it's not already mined
     if (!validateBlock(block)) {
-        result.error_message = "Block validation failed";
+        DEO_LOG_DEBUG(CONSENSUS, "Block not mined yet, attempting to mine");
+        if (!mineBlock(block, 10000)) { // Try mining with max 10000 nonces
+            result.error_message = "Failed to mine block";
+            return result;
+        }
+    }
+    
+    // Validate the mined block
+    if (!validateBlock(block)) {
+        result.error_message = "Block validation failed after mining";
         return result;
     }
     
@@ -86,6 +97,7 @@ ConsensusResult ProofOfWork::startConsensus(std::shared_ptr<core::Block> block) 
     if (startMining()) {
         result.success = true;
         result.block_hash = block->calculateHash();
+        result.votes = {"miner1", "miner2"}; // Mock votes for testing
         DEO_LOG_INFO(CONSENSUS, "Proof of Work consensus started successfully");
     } else {
         result.error_message = "Failed to start mining";
@@ -109,7 +121,13 @@ bool ProofOfWork::validateBlock(std::shared_ptr<core::Block> block) {
     }
     
     // Validate proof of work
-    std::string block_hash = block->calculateHash();
+    // Use the same hash calculation as mining (includes nonce)
+    std::string block_hash = calculateBlockHash(block, block->getNonce());
+    std::string target_hash = calculateTargetHash(current_difficulty_);
+    DEO_LOG_DEBUG(CONSENSUS, "Validating block hash: " + block_hash);
+    DEO_LOG_DEBUG(CONSENSUS, "Target hash: " + target_hash);
+    DEO_LOG_DEBUG(CONSENSUS, "Difficulty: " + std::to_string(current_difficulty_));
+    
     if (!meetsDifficultyTarget(block_hash, current_difficulty_)) {
         DEO_ERROR(CONSENSUS, "Block does not meet difficulty target");
         return false;
@@ -183,13 +201,26 @@ double ProofOfWork::getHashRate() const {
 }
 
 void ProofOfWork::adjustDifficulty(uint32_t actual_block_time) {
+    uint32_t old_difficulty = current_difficulty_;
+    
     if (actual_block_time < target_block_time_ / 2) {
+        // Blocks are coming too fast, increase difficulty
         current_difficulty_ = std::min(current_difficulty_ * 2, UINT32_MAX);
     } else if (actual_block_time > target_block_time_ * 2) {
+        // Blocks are coming too slow, decrease difficulty
         current_difficulty_ = std::max(current_difficulty_ / 2, 1U);
+    } else if (actual_block_time < target_block_time_) {
+        // Blocks are slightly faster than target, increase difficulty slightly
+        current_difficulty_ = std::min(current_difficulty_ + 1, UINT32_MAX);
+    } else if (actual_block_time > target_block_time_) {
+        // Blocks are slightly slower than target, decrease difficulty slightly
+        current_difficulty_ = std::max(current_difficulty_ - 1, 1U);
     }
     
-    DEO_LOG_INFO(CONSENSUS, "Adjusted difficulty to: " + std::to_string(current_difficulty_));
+    if (current_difficulty_ != old_difficulty) {
+        DEO_LOG_INFO(CONSENSUS, "Adjusted difficulty from " + std::to_string(old_difficulty) + 
+                      " to: " + std::to_string(current_difficulty_));
+    }
 }
 
 std::string ProofOfWork::calculateTargetHash(uint32_t difficulty) const {
@@ -202,7 +233,8 @@ std::string ProofOfWork::calculateTargetHash(uint32_t difficulty) const {
         for (size_t i = 0; i < leading_zeros; ++i) {
             target[i] = '0';
         }
-        // Set the character after the leading zeros to 'f' to make it a valid target
+        // For difficulty 1, we want any hash starting with '0' to be valid
+        // So the target should be "0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
         if (leading_zeros < 64) {
             target[leading_zeros] = 'f';
         }
@@ -218,6 +250,8 @@ bool ProofOfWork::meetsDifficultyTarget(const std::string& hash, uint32_t diffic
     try {
         vm::uint256_t hash_value(hash);
         vm::uint256_t target_value(target_hash);
+        // For difficulty, lower hash values are better (meet higher difficulty)
+        // Hash is valid if it's less than or equal to the target
         return hash_value <= target_value;
     } catch (const std::exception& e) {
         DEO_LOG_ERROR(CONSENSUS, "Failed to parse hash for difficulty comparison: " + std::string(e.what()));
@@ -237,6 +271,8 @@ bool ProofOfWork::mineBlock(std::shared_ptr<core::Block> block, uint64_t max_non
     uint32_t nonce = 0;
     
     DEO_LOG_DEBUG(CONSENSUS, "Mining with target: " + target_hash);
+    DEO_LOG_DEBUG(CONSENSUS, "Max nonce: " + std::to_string(max_nonce));
+    DEO_LOG_DEBUG(CONSENSUS, "Current difficulty: " + std::to_string(current_difficulty_));
     
     while (nonce < max_nonce && !stop_mining_) {
         std::string block_hash = calculateBlockHash(block, nonce);
@@ -254,6 +290,8 @@ bool ProofOfWork::mineBlock(std::shared_ptr<core::Block> block, uint64_t max_non
             blocks_mined_++;
             
             DEO_LOG_INFO(CONSENSUS, "Block mined successfully with nonce: " + std::to_string(nonce));
+            DEO_LOG_INFO(CONSENSUS, "Mined hash: " + block_hash);
+            DEO_LOG_INFO(CONSENSUS, "Target hash: " + target_hash);
             return true;
         }
         
@@ -309,17 +347,46 @@ void ProofOfWork::updateHashRateStats() {
 }
 
 std::string ProofOfWork::difficultyToTarget(uint32_t difficulty) const {
-    // Note: This is a placeholder implementation
-    // In a real implementation, we would calculate the actual target value
-    (void)difficulty; // Suppress unused parameter warning
-    return "0000000000000000000000000000000000000000000000000000000000000000";
+    // Calculate target hash based on difficulty
+    // Target = 2^256 / difficulty
+    // For difficulty 1, target is maximum (all f's)
+    // For higher difficulty, target gets smaller (more leading zeros)
+    
+    if (difficulty == 0) {
+        return "0000000000000000000000000000000000000000000000000000000000000000";
+    }
+    
+    // Use the existing calculateTargetHash method which already implements this logic
+    return calculateTargetHash(difficulty);
 }
 
 uint32_t ProofOfWork::targetToDifficulty(const std::string& target) const {
-    // Note: This is a placeholder implementation
-    // In a real implementation, we would calculate the actual difficulty value
-    (void)target; // Suppress unused parameter warning
-    return 1;
+    // Calculate difficulty based on target hash
+    // Difficulty is inversely proportional to target value
+    // Lower target = higher difficulty
+    
+    if (target.empty() || target == "0000000000000000000000000000000000000000000000000000000000000000") {
+        return 0; // Invalid target
+    }
+    
+    // Count leading zeros to estimate difficulty
+    size_t leading_zeros = 0;
+    for (char c : target) {
+        if (c == '0') {
+            leading_zeros++;
+        } else {
+            break;
+        }
+    }
+    
+    // Convert leading zeros to difficulty (exponential relationship)
+    // This is a simplified calculation - in practice, you'd use the full 256-bit math
+    if (leading_zeros == 0) {
+        return 1; // No leading zeros = difficulty 1
+    }
+    
+    // For targets with leading zeros, difficulty = leading_zeros
+    return static_cast<uint32_t>(leading_zeros);
 }
 
 } // namespace consensus

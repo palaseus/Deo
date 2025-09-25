@@ -432,7 +432,7 @@ cmake -DENABLE_SANITIZERS=OFF ..
 ./build/bin/DeoBlockchain_tests --gtest_filter="VMTest.*"
 
 # Run with verbose output
-./build/bin/DeoBlockchain_tests --gtest_output=xml:test_results.xml
+./build/bin/DeoBlockchain_tests --gtest_output=xml:test_results/test_results.xml
 ```
 
 ## Performance Tuning

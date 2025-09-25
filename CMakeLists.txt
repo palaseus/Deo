@@ -208,21 +208,28 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 set(TEST_SOURCES
     tests/vm/test_vm.cpp
     tests/vm/test_uint256.cpp
+    tests/vm/test_vm_enhanced.cpp
     tests/core/test_blockchain.cpp
+    tests/core/test_blockchain_enhanced.cpp
+    tests/core/test_blockchain_simple.cpp
     tests/core/test_block.cpp
     tests/core/test_transaction.cpp
     tests/core/test_transaction_fees.cpp
     tests/consensus/test_proof_of_work.cpp
     tests/consensus/test_proof_of_stake.cpp
     tests/consensus/test_proof_of_stake_safe.cpp
+    tests/consensus/test_consensus_enhanced.cpp
     tests/network/test_peer_connection_manager.cpp
+    tests/network/test_network_enhanced.cpp
     tests/network/test_peer_authentication.cpp
     tests/network/test_peer_reputation.cpp
     tests/storage/test_leveldb_storage.cpp
     tests/storage/test_block_pruning.cpp
+    tests/storage/test_storage_enhanced.cpp
     tests/sync/test_fast_sync.cpp
     tests/testing/test_scale_testing.cpp
     tests/testing/test_adversarial_testing.cpp
+    tests/integration/test_integration_comprehensive.cpp
     tests/compiler/test_contract_compiler.cpp
     tests/crypto/test_crypto.cpp
     tests/utils/test_utils.cpp

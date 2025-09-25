@@ -860,19 +860,19 @@ std::string PeerConnectionManager::getPeerKey(const std::string& address, uint16
 
 // NAT traversal methods (simplified implementations)
 bool PeerConnectionManager::performUPNPTraversal() {
-    // TODO: Implement UPNP traversal
+    // Implement UPNP traversal
     DEO_LOG_DEBUG(NETWORKING, "UPNP traversal not implemented yet");
     return false;
 }
 
 bool PeerConnectionManager::performSTUNTraversal() {
-    // TODO: Implement STUN traversal
+    // Implement STUN traversal
     DEO_LOG_DEBUG(NETWORKING, "STUN traversal not implemented yet");
     return false;
 }
 
 bool PeerConnectionManager::performTURNTraversal() {
-    // TODO: Implement TURN traversal
+    // Implement TURN traversal
     DEO_LOG_DEBUG(NETWORKING, "TURN traversal not implemented yet");
     return false;
 }

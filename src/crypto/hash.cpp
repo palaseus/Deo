@@ -15,6 +15,7 @@
 #include <openssl/evp.h>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 #include <stdexcept>
 
 namespace deo {
@@ -108,6 +109,7 @@ std::string Hash::hash160(const std::vector<uint8_t>& data) {
 
 std::vector<uint8_t> Hash::hexToBytes(const std::string& hex) {
     if (hex.length() % 2 != 0) {
+        std::cout << "DEBUG: Odd length hex string: '" << hex << "' (length: " << hex.length() << ")" << std::endl;
         DEO_ERROR(VALIDATION, "Invalid hex string length");
         throw std::invalid_argument("Hex string length must be even");
     }

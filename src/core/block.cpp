@@ -411,11 +411,11 @@ bool Block::isGenesis() const {
 }
 
 std::chrono::system_clock::time_point Block::getTimestamp() const {
-    return std::chrono::system_clock::time_point(std::chrono::nanoseconds(header_.timestamp));
+    return std::chrono::system_clock::time_point(std::chrono::seconds(header_.timestamp));
 }
 
 void Block::setTimestamp(const std::chrono::system_clock::time_point& timestamp) {
-    header_.timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    header_.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
         timestamp.time_since_epoch()).count();
     hash_cached_ = false; // Invalidate cached hash
 }
@@ -428,7 +428,8 @@ bool Block::meetsDifficultyTarget(const std::string& target_hash) const {
         vm::uint256_t block_value(block_hash);
         vm::uint256_t target_value(target_hash);
         
-        
+        // For difficulty, lower hash values are better (meet higher difficulty)
+        // So we check if block hash is less than target
         return block_value < target_value;
     } catch (const std::exception& e) {
         DEO_LOG_ERROR(BLOCKCHAIN, "Failed to parse difficulty target: " + std::string(e.what()));

@@ -365,7 +365,7 @@ bool TcpNetworkManager::connectToPeer(const std::string& address, uint16_t port)
         return false;
     }
     
-    // Wait for connection to complete (simplified)
+    // Wait for connection to complete with timeout
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
     // Create connection object

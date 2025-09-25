@@ -153,6 +153,20 @@ public:
     std::string calculateTargetHash(uint32_t difficulty) const;
     
     /**
+     * @brief Convert difficulty to target value
+     * @param difficulty Difficulty level
+     * @return Target value
+     */
+    std::string difficultyToTarget(uint32_t difficulty) const;
+    
+    /**
+     * @brief Convert target to difficulty
+     * @param target Target value
+     * @return Difficulty level
+     */
+    uint32_t targetToDifficulty(const std::string& target) const;
+    
+    /**
      * @brief Check if hash meets difficulty target
      * @param hash Hash to check
      * @param difficulty Difficulty level
@@ -167,6 +181,14 @@ public:
      * @return True if block was mined successfully
      */
     bool mineBlock(std::shared_ptr<core::Block> block, uint64_t max_nonce = UINT64_MAX);
+    
+    /**
+     * @brief Calculate block hash for mining
+     * @param block Block to hash
+     * @param nonce Nonce value
+     * @return Block hash
+     */
+    std::string calculateBlockHash(std::shared_ptr<core::Block> block, uint32_t nonce) const;
 
 private:
     uint32_t initial_difficulty_;      ///< Initial difficulty
@@ -194,32 +216,11 @@ private:
      */
     void miningWorker(std::shared_ptr<core::Block> block);
     
-    /**
-     * @brief Calculate block hash with nonce
-     * @param block Block to hash
-     * @param nonce Nonce value
-     * @return Block hash
-     */
-    std::string calculateBlockHash(std::shared_ptr<core::Block> block, uint32_t nonce) const;
     
     /**
      * @brief Update hash rate statistics
      */
     void updateHashRateStats();
-    
-    /**
-     * @brief Convert difficulty to target value
-     * @param difficulty Difficulty level
-     * @return Target value
-     */
-    std::string difficultyToTarget(uint32_t difficulty) const;
-    
-    /**
-     * @brief Convert target to difficulty
-     * @param target Target value
-     * @return Difficulty level
-     */
-    uint32_t targetToDifficulty(const std::string& target) const;
 };
 
 } // namespace consensus

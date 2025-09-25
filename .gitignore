@@ -109,11 +109,16 @@ data/
 *.lock
 
 # Test artifacts
+test_results/
 test_results.json
 vm_test_results.json
+test_results.xml
 *.test
 *.benchmark
 /tmp/test_peers*.txt
+/tmp/test_blockchain*
+/tmp/test_storage*
+/tmp/test_integration*
 
 # Development artifacts
 debug_*

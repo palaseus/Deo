@@ -284,7 +284,7 @@ TEST_F(IntegrationTest, FullBlockchainOperation) {
 ./build/bin/DeoBlockchain_tests --gtest_filter="*ProofOfStake*"
 
 # Run with verbose output
-./build/bin/DeoBlockchain_tests --gtest_output=xml:test_results.xml
+./build/bin/DeoBlockchain_tests --gtest_output=xml:test_results/test_results.xml
 ```
 
 ### Continuous Integration
@@ -296,7 +296,7 @@ The testing framework integrates with CI/CD pipelines:
 - name: Run Tests
   run: |
     cd build
-    ./bin/DeoBlockchain_tests --gtest_output=xml:test_results.xml
+    ./bin/DeoBlockchain_tests --gtest_output=xml:test_results/test_results.xml
     
 - name: Upload Test Results
   uses: actions/upload-artifact@v2

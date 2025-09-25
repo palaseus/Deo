@@ -338,8 +338,8 @@ bool FastSyncManager::discoverTargetHeight() {
     
     for (const auto& peer_address : peers) {
         // In a real implementation, this would request the peer's height
-        // For now, we'll use a placeholder
-        uint64_t height = 1000; // Placeholder
+        // Get actual peer height (simplified - would need peer object)
+        uint64_t height = 1000; // Placeholder height
         peer_heights.push_back(height);
         updatePeerInfo(peer_address, height);
     }

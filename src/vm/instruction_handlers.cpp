@@ -10,12 +10,16 @@
 #include "utils/logger.h"
 
 #include <stdexcept>
+#include <iostream>
 
 namespace deo {
 namespace vm {
 
 void VirtualMachine::executeInstruction(Opcode opcode, VMState& state, const ExecutionContext& context) {
     switch (opcode) {
+        case Opcode::STOP:
+            state.halted = true;
+            break;
         case Opcode::PUSH0:
             state.stack.push(uint256_t(0));
             break;
@@ -201,9 +205,15 @@ void VirtualMachine::executeInstruction(Opcode opcode, VMState& state, const Exe
 
 // Stack operations
 void VirtualMachine::handlePush(VMState& state, const std::vector<uint8_t>& code, uint8_t push_size) {
+    
     // Check stack overflow (EVM stack limit is 1024 items)
     if (state.stack.size() >= 1024) {
         throw std::runtime_error("Stack overflow");
+    }
+    
+    // Validate push_size to prevent integer overflow
+    if (push_size > 32) {
+        throw std::runtime_error("Invalid push size: " + std::to_string(push_size));
     }
     
     // Check bounds: we need 1 byte for opcode + push_size bytes for data
@@ -225,7 +235,7 @@ void VirtualMachine::handlePush(VMState& state, const std::vector<uint8_t>& code
     
     // Increment PC by 1 (opcode) + push_size (data bytes)
     // The main loop will NOT increment PC for PUSH instructions
-    state.pc += push_size;
+    state.pc += push_size + 1;
     
     DEO_LOG_DEBUG(VIRTUAL_MACHINE, "PUSH" + std::to_string(push_size) + " executed: pushed " + 
                   value.toString() + " onto stack. Stack size: " + std::to_string(state.stack.size()));
@@ -295,6 +305,11 @@ void VirtualMachine::handleAdd(VMState& state) {
     state.stack.pop();
     uint256_t a = state.stack.top();
     state.stack.pop();
+    
+    // Check for overflow
+    if (a > uint256_t("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") - b) {
+        throw std::runtime_error("Integer overflow in ADD operation");
+    }
     
     uint256_t result = a + b;
     state.stack.push(result);
@@ -541,6 +556,9 @@ void VirtualMachine::handleMStore(VMState& state) {
     
     expandMemory(state, offset.toUint64() + 32);
     writeUint256(state.memory, offset.toUint64(), value);
+    
+    DEO_LOG_DEBUG(VIRTUAL_MACHINE, "MSTORE: offset=" + std::to_string(offset.toUint64()) + 
+                 ", value=" + value.toString() + ", memory_size=" + std::to_string(state.memory.size()));
 }
 
 void VirtualMachine::handleMStore8(VMState& state) {
@@ -588,9 +606,22 @@ void VirtualMachine::handleSStore(VMState& state, const ExecutionContext& contex
 }
 
 // System operations
-void VirtualMachine::handleAddress(VMState& state, const ExecutionContext& /* context */) {
-    // Convert address string to uint256_t (simplified)
-    uint256_t address = uint256_t(0); // Simplified implementation
+void VirtualMachine::handleAddress(VMState& state, const ExecutionContext& context) {
+    // Convert contract address string to uint256_t
+    uint256_t address = uint256_t(0);
+    if (!context.contract_address.empty()) {
+        // Convert hex address to uint256_t
+        try {
+            std::string clean_address = context.contract_address;
+            if (clean_address.substr(0, 2) == "0x") {
+                clean_address = clean_address.substr(2);
+            }
+            address = uint256_t("0x" + clean_address);
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to convert address: " + std::string(e.what()));
+            address = uint256_t(0);
+        }
+    }
     state.stack.push(address);
 }
 
@@ -599,16 +630,40 @@ void VirtualMachine::handleBalance(VMState& state, const ExecutionContext& /* co
         throw std::runtime_error("Stack underflow for BALANCE");
     }
     
-    [[maybe_unused]] uint256_t address = state.stack.top();
+    uint256_t address = state.stack.top();
     state.stack.pop();
     
-    // Simplified balance lookup
-    state.stack.push(uint256_t(0));
+    // Convert address to string for lookup
+    std::string address_str = address.toString();
+    if (address_str.length() > 2 && address_str.substr(0, 2) == "0x") {
+        address_str = address_str.substr(2);
+    }
+    
+    // Look up balance in account balances
+    uint256_t balance = uint256_t(0);
+    auto it = account_balances_.find(address_str);
+    if (it != account_balances_.end()) {
+        balance = it->second;
+    }
+    
+    state.stack.push(balance);
 }
 
-void VirtualMachine::handleCaller(VMState& state, const ExecutionContext& /* context */) {
-    // Convert caller address string to uint256_t (simplified)
-    uint256_t caller = uint256_t(0); // Simplified implementation
+void VirtualMachine::handleCaller(VMState& state, const ExecutionContext& context) {
+    // Convert caller address string to uint256_t
+    uint256_t caller = uint256_t(0);
+    if (!context.caller_address.empty()) {
+        try {
+            std::string clean_address = context.caller_address;
+            if (clean_address.substr(0, 2) == "0x") {
+                clean_address = clean_address.substr(2);
+            }
+            caller = uint256_t("0x" + clean_address);
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to convert caller address: " + std::string(e.what()));
+            caller = uint256_t(0);
+        }
+    }
     state.stack.push(caller);
 }
 
@@ -690,21 +745,48 @@ void VirtualMachine::handleGasPrice(VMState& state, const ExecutionContext& cont
     state.stack.push(uint256_t(context.gas_price));
 }
 
-void VirtualMachine::handleBlockHash(VMState& state, const ExecutionContext& /* context */) {
+void VirtualMachine::handleBlockHash(VMState& state, const ExecutionContext& context) {
     if (state.stack.empty()) {
         throw std::runtime_error("Stack underflow for BLOCKHASH");
     }
     
-    [[maybe_unused]] uint256_t block_number = state.stack.top();
+    uint256_t block_number = state.stack.top();
     state.stack.pop();
     
-    // Simplified block hash lookup
-    state.stack.push(uint256_t(0));
+    // Look up block hash by number
+    uint256_t block_hash = uint256_t(0);
+    if (block_number.toUint64() <= context.block_number) {
+        // In a real implementation, this would query the blockchain
+        // For now, we'll generate a deterministic hash based on block number
+        std::string hash_input = "block_" + block_number.toString();
+        std::vector<uint8_t> hash_data(hash_input.begin(), hash_input.end());
+        
+        // Use a simple hash function (in production, use proper cryptographic hash)
+        uint64_t hash_value = 0;
+        for (uint8_t byte : hash_data) {
+            hash_value = hash_value * 31 + byte;
+        }
+        block_hash = uint256_t(hash_value);
+    }
+    
+    state.stack.push(block_hash);
 }
 
-void VirtualMachine::handleCoinbase(VMState& state, const ExecutionContext& /* context */) {
-    // Convert coinbase address string to uint256_t (simplified)
-    uint256_t coinbase = uint256_t(0); // Simplified implementation
+void VirtualMachine::handleCoinbase(VMState& state, const ExecutionContext& context) {
+    // Convert coinbase address string to uint256_t
+    uint256_t coinbase = uint256_t(0);
+    if (!context.block_coinbase.empty()) {
+        try {
+            std::string clean_address = context.block_coinbase;
+            if (clean_address.substr(0, 2) == "0x") {
+                clean_address = clean_address.substr(2);
+            }
+            coinbase = uint256_t("0x" + clean_address);
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to convert coinbase address: " + std::string(e.what()));
+            coinbase = uint256_t(0);
+        }
+    }
     state.stack.push(coinbase);
 }
 
@@ -717,8 +799,10 @@ void VirtualMachine::handleNumber(VMState& state, const ExecutionContext& contex
 }
 
 void VirtualMachine::handleDifficulty(VMState& state, const ExecutionContext& /* context */) {
-    // Simplified difficulty
-    state.stack.push(uint256_t(1));
+    // Get difficulty from context (would be provided by blockchain)
+    uint256_t difficulty = uint256_t(1); // Default difficulty
+    // In a real implementation, this would come from the block header
+    state.stack.push(difficulty);
 }
 
 void VirtualMachine::handleGasLimit(VMState& state, const ExecutionContext& context) {
@@ -737,14 +821,35 @@ void VirtualMachine::handleSha3(VMState& state) {
     
     expandMemory(state, offset.toUint64() + size.toUint64());
     
-    // Simplified SHA3 implementation
-    std::vector<uint8_t> data(state.memory.begin() + offset.toUint64(), 
-                             state.memory.begin() + offset.toUint64() + size.toUint64());
+    // Extract data from memory
+    std::vector<uint8_t> data;
+    uint64_t start_offset = offset.toUint64();
+    uint64_t data_size = size.toUint64();
     
-    // Use a simple hash for now
+    if (start_offset + data_size <= state.memory.size()) {
+        data.assign(state.memory.begin() + start_offset, 
+                   state.memory.begin() + start_offset + data_size);
+    } else {
+        // Handle out of bounds access
+        data.resize(data_size, 0);
+        uint64_t copy_size = std::min(data_size, static_cast<uint64_t>(state.memory.size()) - start_offset);
+        if (copy_size > 0) {
+            std::copy(state.memory.begin() + start_offset,
+                     state.memory.begin() + start_offset + copy_size,
+                     data.begin());
+        }
+    }
+    
+    // Calculate SHA3 hash (simplified implementation)
     uint256_t hash = uint256_t(0);
-    for (size_t i = 0; i < data.size(); ++i) {
-        hash = hash + uint256_t(data[i]);
+    if (!data.empty()) {
+        // Use a more sophisticated hash function
+        uint64_t hash_value = 0;
+        for (size_t i = 0; i < data.size(); ++i) {
+            hash_value = hash_value * 31 + data[i];
+            hash_value = hash_value ^ (hash_value >> 16);
+        }
+        hash = uint256_t(hash_value);
     }
     
     state.stack.push(hash);
@@ -786,17 +891,35 @@ void VirtualMachine::handleInvalid(VMState& /* state */) {
     throw std::runtime_error("INVALID instruction executed");
 }
 
-void VirtualMachine::handleSelfDestruct(VMState& state, const ExecutionContext& /* context */) {
+void VirtualMachine::handleSelfDestruct(VMState& state, const ExecutionContext& context) {
     if (state.stack.empty()) {
         throw std::runtime_error("Stack underflow for SELFDESTRUCT");
     }
     
-    [[maybe_unused]] uint256_t beneficiary = state.stack.top();
+    uint256_t beneficiary = state.stack.top();
     state.stack.pop();
     
-    // Simplified self-destruct implementation
-    // In a real implementation, this would transfer the contract's balance
-    // to the beneficiary and mark the contract for deletion
+    // Convert beneficiary address to string
+    std::string beneficiary_str = beneficiary.toString();
+    if (beneficiary_str.length() > 2 && beneficiary_str.substr(0, 2) == "0x") {
+        beneficiary_str = beneficiary_str.substr(2);
+    }
+    
+    // Get contract balance
+    uint256_t contract_balance = uint256_t(0);
+    auto it = account_balances_.find(context.contract_address);
+    if (it != account_balances_.end()) {
+        contract_balance = it->second;
+    }
+    
+    // Transfer balance to beneficiary
+    if (contract_balance > uint256_t(0)) {
+        account_balances_[beneficiary_str] = account_balances_[beneficiary_str] + contract_balance;
+        account_balances_[context.contract_address] = uint256_t(0);
+    }
+    
+    // Mark contract for deletion (in a real implementation)
+    DEO_LOG_DEBUG(VIRTUAL_MACHINE, "Contract " + context.contract_address + " self-destructed, balance transferred to " + beneficiary_str);
 }
 
 // Utility functions

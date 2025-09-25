@@ -110,6 +110,12 @@ public:
     std::vector<std::shared_ptr<core::Block>> getBlocks(uint64_t start_height, uint64_t end_height) const;
     
     /**
+     * @brief Load all blocks from storage
+     * @return List of all blocks
+     */
+    std::vector<std::shared_ptr<core::Block>> loadAllBlocks() const;
+    
+    /**
      * @brief Get block hashes in a height range
      * @param start_height Starting height
      * @param end_height Ending height
