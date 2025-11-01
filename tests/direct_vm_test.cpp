@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-#include "include/vm/virtual_machine.h"
+#include "vm/virtual_machine.h"
 
 int main() {
     std::cout << "=== Direct VM Test ===" << std::endl;

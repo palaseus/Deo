@@ -97,10 +97,41 @@ public:
      * @return Statistics string
      */
     std::string getStatistics() const;
+    
+    /**
+     * @brief Set current block context for contract execution
+     * @param block_number Current block number
+     * @param block_timestamp Current block timestamp
+     * @param block_coinbase Current block coinbase (miner address)
+     */
+    void setBlockContext(uint64_t block_number, uint64_t block_timestamp, const std::string& block_coinbase);
+    
+    /**
+     * @brief Get current block number
+     * @return Current block number
+     */
+    uint64_t getCurrentBlockNumber() const;
+    
+    /**
+     * @brief Get current block timestamp
+     * @return Current block timestamp
+     */
+    uint64_t getCurrentBlockTimestamp() const;
+    
+    /**
+     * @brief Get current block coinbase
+     * @return Current block coinbase address
+     */
+    std::string getCurrentBlockCoinbase() const;
 
 private:
     std::shared_ptr<StateStore> state_store_;    ///< Persistent state store
     mutable std::mutex mutex_;                   ///< Thread safety mutex
+    
+    // Block context (set by caller before contract execution)
+    uint64_t current_block_number_;              ///< Current block number
+    uint64_t current_block_timestamp_;           ///< Current block timestamp
+    std::string current_block_coinbase_;         ///< Current block coinbase (miner address)
     
     // Statistics
     mutable uint64_t total_deployments_;         ///< Total contract deployments

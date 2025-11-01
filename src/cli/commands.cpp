@@ -22,8 +22,11 @@
 #include "vm/state_store.h"
 #include "vm/determinism_tester.h"
 #include "cli/contract_cli.h"
+#include "wallet/wallet.h"
+#include "core/transaction_fees.h"
 #include "utils/logger.h"
 #include "utils/error_handler.h"
+#include "utils/config.h"
 
 #include <iostream>
 #include <sstream>
@@ -61,6 +64,19 @@ Commands::Commands() {
 bool Commands::initialize() {
     DEO_LOG_INFO(CLI, "Commands initialized");
     
+    // Initialize wallet
+    wallet::WalletConfig wallet_config;
+    wallet_config.data_directory = "./wallet";
+    wallet_config.encrypt_wallet = false; // TODO: Load from config
+    wallet_ = std::make_unique<wallet::Wallet>(wallet_config);
+    if (!wallet_->initialize()) {
+        DEO_LOG_ERROR(CLI, "Failed to initialize wallet");
+        return false;
+    }
+    
+    // Try to load existing wallet
+    wallet_->load("");
+    
     // Initialize contract CLI when blockchain is available
     if (blockchain_) {
         auto state_store = std::make_shared<vm::StateStore>("./state.db");
@@ -88,6 +104,18 @@ int Commands::execute(const CommandResult& result) {
         return validateBlock(result);
     } else if (result.command == "generate-keypair") {
         return generateKeyPair(result);
+    } else if (result.command == "wallet-create") {
+        return walletCreateAccount(result);
+    } else if (result.command == "wallet-import") {
+        return walletImportAccount(result);
+    } else if (result.command == "wallet-list") {
+        return walletListAccounts(result);
+    } else if (result.command == "wallet-export") {
+        return walletExportAccount(result);
+    } else if (result.command == "wallet-remove") {
+        return walletRemoveAccount(result);
+    } else if (result.command == "wallet-default") {
+        return walletSetDefault(result);
     } else if (result.command == "test-crypto") {
         return testCrypto(result);
     } else if (result.command == "test-merkle") {
@@ -1856,22 +1884,320 @@ int Commands::getContractBytecode([[maybe_unused]] const CommandResult& result) 
     return 0;
 }
 
-int Commands::getContractStorage([[maybe_unused]] const CommandResult& result) {
+int Commands::getContractStorage(const CommandResult& result) {
     std::cout << "=== Get Contract Storage ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
-    return 0;
+    
+    try {
+        // Get contract address from arguments
+        auto address_it = result.args.find("address");
+        if (address_it == result.args.end()) {
+            std::cerr << "Error: Contract address is required. Use --address <contract_address>" << std::endl;
+            return 1;
+        }
+        
+        std::string contract_address = address_it->second;
+        
+        // Get storage key from arguments
+        auto key_it = result.args.find("key");
+        if (key_it == result.args.end()) {
+            std::cerr << "Error: Storage key is required. Use --key <key_hex>" << std::endl;
+            return 1;
+        }
+        
+        std::string key_str = key_it->second;
+        
+        // Remove 0x prefix if present
+        if (key_str.size() > 2 && key_str.substr(0, 2) == "0x") {
+            key_str = key_str.substr(2);
+        }
+        
+        // Convert hex string to uint256_t
+        uint256_t storage_key;
+        try {
+            if (!key_str.empty()) {
+                storage_key = uint256_t(key_str);
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Invalid storage key format. Use hex format (e.g., 0x1234...)" << std::endl;
+            return 1;
+        }
+        
+        // Get state store and retrieve storage value
+        auto state_store = getGlobalStateStore();
+        if (!state_store) {
+            std::cerr << "Error: Failed to access state store" << std::endl;
+            return 1;
+        }
+        
+        // Check if contract exists
+        if (!state_store->contractExists(contract_address)) {
+            std::cerr << "Error: Contract not found at address: " << contract_address << std::endl;
+            return 1;
+        }
+        
+        // Get storage value
+        uint256_t value = state_store->getStorageValue(contract_address, storage_key);
+        
+        // Display result
+        std::cout << "Contract Address: " << contract_address << std::endl;
+        std::cout << "Storage Key: 0x" << storage_key.toString() << std::endl;
+        std::cout << "Storage Value: 0x" << value.toString() << std::endl;
+        std::cout << "Storage Value (Decimal): " << value.toString() << std::endl;
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
-int Commands::setContractStorage([[maybe_unused]] const CommandResult& result) {
+int Commands::setContractStorage(const CommandResult& result) {
     std::cout << "=== Set Contract Storage ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
-    return 0;
+    
+    try {
+        // Get contract address from arguments
+        auto address_it = result.args.find("address");
+        if (address_it == result.args.end()) {
+            std::cerr << "Error: Contract address is required. Use --address <contract_address>" << std::endl;
+            return 1;
+        }
+        
+        std::string contract_address = address_it->second;
+        
+        // Get storage key from arguments
+        auto key_it = result.args.find("key");
+        if (key_it == result.args.end()) {
+            std::cerr << "Error: Storage key is required. Use --key <key_hex>" << std::endl;
+            return 1;
+        }
+        
+        std::string key_str = key_it->second;
+        
+        // Remove 0x prefix if present
+        if (key_str.size() > 2 && key_str.substr(0, 2) == "0x") {
+            key_str = key_str.substr(2);
+        }
+        
+        // Convert hex string to uint256_t
+        uint256_t storage_key;
+        try {
+            storage_key = uint256_t(key_str);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Invalid storage key format. Use hex format (e.g., 0x1234...)" << std::endl;
+            return 1;
+        }
+        
+        // Get storage value from arguments
+        auto value_it = result.args.find("value");
+        if (value_it == result.args.end()) {
+            std::cerr << "Error: Storage value is required. Use --value <value_hex>" << std::endl;
+            return 1;
+        }
+        
+        std::string value_str = value_it->second;
+        
+        // Remove 0x prefix if present
+        if (value_str.size() > 2 && value_str.substr(0, 2) == "0x") {
+            value_str = value_str.substr(2);
+        }
+        
+        // Convert hex string to uint256_t
+        uint256_t storage_value;
+        try {
+            storage_value = uint256_t(value_str);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: Invalid storage value format. Use hex format (e.g., 0x1234...)" << std::endl;
+            return 1;
+        }
+        
+        // Get state store
+        auto state_store = getGlobalStateStore();
+        if (!state_store) {
+            std::cerr << "Error: Failed to access state store" << std::endl;
+            return 1;
+        }
+        
+        // Check if contract exists
+        if (!state_store->contractExists(contract_address)) {
+            std::cerr << "Error: Contract not found at address: " << contract_address << std::endl;
+            return 1;
+        }
+        
+        // Set storage value
+        if (!state_store->setStorageValue(contract_address, storage_key, storage_value)) {
+            std::cerr << "Error: Failed to set storage value" << std::endl;
+            return 1;
+        }
+        
+        // Display result
+        std::cout << "Contract Address: " << contract_address << std::endl;
+        std::cout << "Storage Key: 0x" << storage_key.toString() << std::endl;
+        std::cout << "Storage Value Set: 0x" << storage_value.toString() << std::endl;
+        std::cout << "✓ Storage value updated successfully" << std::endl;
+        
+        std::cout << "\n⚠️  Note: In production, storage should only be modified by contract execution." << std::endl;
+        std::cout << "    This command is for testing/debugging purposes only." << std::endl;
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
-int Commands::estimateGas([[maybe_unused]] const CommandResult& result) {
+int Commands::estimateGas(const CommandResult& result) {
     std::cout << "=== Estimate Gas ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
-    return 0;
+    
+    try {
+        // Check if this is a contract call or regular transaction
+        auto contract_addr_it = result.args.find("contract");
+        auto to_addr_it = result.args.find("to");
+        
+        if (contract_addr_it != result.args.end() || to_addr_it != result.args.end()) {
+            // Contract call gas estimation
+            std::string contract_address;
+            if (contract_addr_it != result.args.end()) {
+                contract_address = contract_addr_it->second;
+            } else {
+                contract_address = to_addr_it->second;
+            }
+            
+            // Get call data (optional)
+            std::vector<uint8_t> call_data;
+            auto data_it = result.args.find("data");
+            if (data_it != result.args.end()) {
+                std::string data_str = data_it->second;
+                // Remove 0x prefix if present
+                if (data_str.size() > 2 && data_str.substr(0, 2) == "0x") {
+                    data_str = data_str.substr(2);
+                }
+                // Convert hex string to bytes
+                for (size_t i = 0; i < data_str.length(); i += 2) {
+                    if (i + 1 < data_str.length()) {
+                        std::string byte_str = data_str.substr(i, 2);
+                        uint8_t byte_val = static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16));
+                        call_data.push_back(byte_val);
+                    }
+                }
+            }
+            
+            // Get value (optional)
+            uint64_t value = 0;
+            auto value_it = result.args.find("value");
+            if (value_it != result.args.end()) {
+                std::string value_str = value_it->second;
+                if (value_str.size() > 2 && value_str.substr(0, 2) == "0x") {
+                    value = std::stoull(value_str.substr(2), nullptr, 16);
+                } else {
+                    value = std::stoull(value_str);
+                }
+            }
+            
+            // Get state store
+            auto state_store = getGlobalStateStore();
+            
+            if (!state_store->contractExists(contract_address)) {
+                std::cerr << "Error: Contract not found at address: " << contract_address << std::endl;
+                std::cerr << "       Note: Gas estimation for non-existent contracts uses base cost." << std::endl;
+            }
+            
+            // Estimate gas for contract call
+            // Base cost: 21000 (transaction) + 24000 (contract call)
+            uint64_t base_gas = 45000;
+            
+            // Add gas for call data (4 gas per byte for non-zero, 68 for zero)
+            uint64_t data_gas = 0;
+            for (uint8_t byte : call_data) {
+                if (byte == 0) {
+                    data_gas += 4;
+                } else {
+                    data_gas += 68;
+                }
+            }
+            
+            // Add gas for storage operations (if contract exists, try to execute dry-run)
+            uint64_t execution_gas = 0;
+            if (state_store->contractExists(contract_address)) {
+                // For existing contracts, add estimated execution cost
+                // This is a simplified estimation - in production, you'd do a dry-run execution
+                execution_gas = 21000; // Estimated execution gas
+            }
+            
+            uint64_t total_gas = base_gas + data_gas + execution_gas;
+            
+            // Display result
+            std::cout << "Contract Address: " << contract_address << std::endl;
+            if (!call_data.empty()) {
+                std::cout << "Call Data Size: " << call_data.size() << " bytes" << std::endl;
+            }
+            if (value > 0) {
+                std::cout << "Value: " << value << " wei" << std::endl;
+            }
+            std::cout << "\nGas Estimation:" << std::endl;
+            std::cout << "  Base Transaction: 21,000 gas" << std::endl;
+            std::cout << "  Contract Call:    24,000 gas" << std::endl;
+            std::cout << "  Call Data:         " << std::setw(6) << data_gas << " gas" << std::endl;
+            std::cout << "  Execution:         " << std::setw(6) << execution_gas << " gas" << std::endl;
+            std::cout << "  ──────────────────────────" << std::endl;
+            std::cout << "  Total Estimated:   " << std::setw(6) << total_gas << " gas" << std::endl;
+            std::cout << "\nRecommended Gas Limit: " << (total_gas * 120 / 100) << " gas (20% buffer)" << std::endl;
+            
+            return 0;
+        } else {
+            // Regular transaction gas estimation
+            // Parse transaction details from arguments
+            std::vector<core::TransactionInput> inputs;
+            std::vector<core::TransactionOutput> outputs;
+            
+            // Try to get from/to addresses for simple estimation
+            auto from_it = result.args.find("from");
+            auto to_it = result.args.find("to");
+            
+            if (from_it != result.args.end() && to_it != result.args.end()) {
+                // Create a simple transaction for estimation
+                core::TransactionInput input;
+                core::TransactionOutput output;
+                
+                // Get amount (optional) - note: TransactionOutput doesn't store amount directly
+                // We'll just create empty outputs for estimation
+                outputs.push_back(output);
+                inputs.push_back(input);
+                
+                // Create transaction
+                core::Transaction tx(inputs, outputs, core::Transaction::Type::REGULAR);
+                
+                // Use TransactionFeeCalculator for gas estimation
+                deo::core::TransactionFeeCalculator fee_calculator;
+                uint64_t estimated_gas = fee_calculator.calculateGasUsage(tx);
+                
+                // Display result
+                std::cout << "Transaction Type: Regular Transfer" << std::endl;
+                std::cout << "From: " << from_it->second << std::endl;
+                std::cout << "To: " << to_it->second << std::endl;
+                
+                // Get amount for display (if provided)
+                auto amount_it = result.args.find("amount");
+                if (amount_it != result.args.end()) {
+                    std::cout << "Amount: " << amount_it->second << " wei" << std::endl;
+                }
+                std::cout << "\nGas Estimation:" << std::endl;
+                std::cout << "  Estimated Gas:   " << std::setw(6) << estimated_gas << " gas" << std::endl;
+                std::cout << "\nRecommended Gas Limit: " << (estimated_gas * 110 / 100) << " gas (10% buffer)" << std::endl;
+                
+                return 0;
+            } else {
+                std::cerr << "Error: For regular transactions, specify --from <address> and --to <address>" << std::endl;
+                std::cerr << "       For contract calls, specify --contract <address> [--data <hex>] [--value <wei>]" << std::endl;
+                return 1;
+            }
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
 int Commands::validateSourceCode([[maybe_unused]] const CommandResult& result) {
@@ -1880,33 +2206,194 @@ int Commands::validateSourceCode([[maybe_unused]] const CommandResult& result) {
     return 0;
 }
 
-int Commands::createContractTemplate([[maybe_unused]] const CommandResult& result) {
+int Commands::createContractTemplate(const CommandResult& result) {
     std::cout << "=== Create Contract Template ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
+    
+    if (!contract_cli_) {
+        std::cerr << "Error: Contract CLI not initialized" << std::endl;
+        return 1;
+    }
+    
+    std::string template_name = result.args.count("template") > 0 ? result.args.at("template") : "simple_storage";
+    std::string output_file = result.args.count("output") > 0 ? result.args.at("output") : template_name + ".sol";
+    
+    // Get available templates
+    auto available_templates = contract_cli_->getAvailableTemplates();
+    
+    // Check if template exists
+    if (std::find(available_templates.begin(), available_templates.end(), template_name) == available_templates.end()) {
+        std::cerr << "Error: Unknown template '" << template_name << "'" << std::endl;
+        std::cout << "\nAvailable templates:" << std::endl;
+        for (const auto& tmpl : available_templates) {
+            std::cout << "  - " << tmpl << std::endl;
+        }
+        return 1;
+    }
+    
+    if (contract_cli_->createContractTemplate(template_name, output_file)) {
+        std::cout << "✓ Template '" << template_name << "' created: " << output_file << std::endl;
+        return 0;
+    } else {
+        std::cerr << "Error: Failed to create template" << std::endl;
+        return 1;
+    }
+}
+
+int Commands::listContractTemplates(const CommandResult& /* result */) {
+    std::cout << "=== Available Contract Templates ===" << std::endl;
+    
+    if (!contract_cli_) {
+        std::cerr << "Error: Contract CLI not initialized" << std::endl;
+        return 1;
+    }
+    
+    auto templates = contract_cli_->getAvailableTemplates();
+    
+    if (templates.empty()) {
+        std::cout << "No templates available" << std::endl;
+    } else {
+        std::cout << "\nAvailable templates:" << std::endl;
+        for (size_t i = 0; i < templates.size(); ++i) {
+            std::cout << "  " << (i + 1) << ". " << templates[i] << std::endl;
+        }
+    }
+    
     return 0;
 }
 
-int Commands::listContractTemplates([[maybe_unused]] const CommandResult& result) {
-    std::cout << "=== List Contract Templates ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
-    return 0;
-}
-
-int Commands::formatSourceCode([[maybe_unused]] const CommandResult& result) {
+int Commands::formatSourceCode(const CommandResult& result) {
     std::cout << "=== Format Source Code ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
+    
+    if (!contract_cli_) {
+        std::cerr << "Error: Contract CLI not initialized" << std::endl;
+        return 1;
+    }
+    
+    std::string input_file = result.args.count("input") > 0 ? result.args.at("input") : "";
+    std::string output_file = result.args.count("output") > 0 ? result.args.at("output") : "";
+    
+    if (input_file.empty()) {
+        std::cerr << "Error: Input file not specified (use --input <file>)" << std::endl;
+        return 1;
+    }
+    
+    // Read source file
+    std::ifstream file(input_file);
+    if (!file.is_open()) {
+        std::cerr << "Error: Cannot open file: " << input_file << std::endl;
+        return 1;
+    }
+    
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_code = buffer.str();
+    file.close();
+    
+    // Format source code
+    std::string formatted = contract_cli_->formatSourceCode(source_code);
+    
+    // Write formatted code
+    if (output_file.empty()) {
+        // Write to stdout
+        std::cout << formatted;
+    } else {
+        // Write to output file
+        std::ofstream out_file(output_file);
+        if (!out_file.is_open()) {
+            std::cerr << "Error: Cannot write to file: " << output_file << std::endl;
+            return 1;
+        }
+        out_file << formatted;
+        out_file.close();
+        std::cout << "✓ Formatted code written to: " << output_file << std::endl;
+    }
+    
     return 0;
 }
 
-int Commands::lintSourceCode([[maybe_unused]] const CommandResult& result) {
+int Commands::lintSourceCode(const CommandResult& result) {
     std::cout << "=== Lint Source Code ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
-    return 0;
+    
+    if (!contract_cli_) {
+        std::cerr << "Error: Contract CLI not initialized" << std::endl;
+        return 1;
+    }
+    
+    std::string input_file = result.args.count("input") > 0 ? result.args.at("input") : "";
+    
+    if (input_file.empty()) {
+        std::cerr << "Error: Input file not specified (use --input <file>)" << std::endl;
+        return 1;
+    }
+    
+    // Read source file
+    std::ifstream file(input_file);
+    if (!file.is_open()) {
+        std::cerr << "Error: Cannot open file: " << input_file << std::endl;
+        return 1;
+    }
+    
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_code = buffer.str();
+    file.close();
+    
+    // Lint source code
+    auto issues = contract_cli_->lintSourceCode(source_code);
+    
+    if (issues.empty()) {
+        std::cout << "✓ No linting issues found!" << std::endl;
+        return 0;
+    } else {
+        std::cout << "\nFound " << issues.size() << " linting issue(s):\n" << std::endl;
+        for (const auto& issue : issues) {
+            std::cout << "  ⚠  " << issue << std::endl;
+        }
+        return 1;
+    }
 }
 
-int Commands::generateDocumentation([[maybe_unused]] const CommandResult& result) {
+int Commands::generateDocumentation(const CommandResult& result) {
     std::cout << "=== Generate Documentation ===" << std::endl;
-    std::cout << "🚧 Feature coming soon!" << std::endl;
+    
+    if (!contract_cli_) {
+        std::cerr << "Error: Contract CLI not initialized" << std::endl;
+        return 1;
+    }
+    
+    std::string input_file = result.args.count("input") > 0 ? result.args.at("input") : "";
+    std::string output_file = result.args.count("output") > 0 ? result.args.at("output") : "CONTRACT.md";
+    
+    if (input_file.empty()) {
+        std::cerr << "Error: Input file not specified (use --input <file>)" << std::endl;
+        return 1;
+    }
+    
+    // Read source file
+    std::ifstream file(input_file);
+    if (!file.is_open()) {
+        std::cerr << "Error: Cannot open file: " << input_file << std::endl;
+        return 1;
+    }
+    
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string source_code = buffer.str();
+    file.close();
+    
+    // Generate documentation
+    std::string documentation = contract_cli_->generateDocumentation(source_code);
+    
+    // Write documentation
+    std::ofstream out_file(output_file);
+    if (!out_file.is_open()) {
+        std::cerr << "Error: Cannot write to file: " << output_file << std::endl;
+        return 1;
+    }
+    out_file << documentation;
+    out_file.close();
+    
+    std::cout << "✓ Documentation generated: " << output_file << std::endl;
     return 0;
 }
 
@@ -1932,6 +2419,264 @@ int Commands::verifyContract([[maybe_unused]] const CommandResult& result) {
     std::cout << "=== Verify Contract ===" << std::endl;
     std::cout << "🚧 Feature coming soon!" << std::endl;
     return 0;
+}
+
+// Wallet command implementations
+
+int Commands::walletCreateAccount(const CommandResult& result) {
+    std::cout << "=== Create Wallet Account ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        std::string label = "";
+        if (result.args.find("label") != result.args.end()) {
+            label = result.args.at("label");
+        }
+        
+        std::string address = wallet_->createAccount(label);
+        
+        if (address.empty()) {
+            std::cout << "❌ Failed to create account" << std::endl;
+            return 1;
+        }
+        
+        std::cout << "✅ Account created successfully!" << std::endl;
+        std::cout << "   Address: " << address << std::endl;
+        std::cout << "   Label: " << (label.empty() ? "(no label)" : label) << std::endl;
+        
+        // Save wallet
+        wallet_->save("");
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error creating account: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+int Commands::walletImportAccount(const CommandResult& result) {
+    std::cout << "=== Import Wallet Account ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        auto it = result.args.find("private-key");
+        if (it == result.args.end()) {
+            std::cout << "❌ Private key not specified. Use: wallet-import --private-key <key> [--label <label>]" << std::endl;
+            return 1;
+        }
+        
+        std::string private_key = it->second;
+        std::string label = "";
+        if (result.args.find("label") != result.args.end()) {
+            label = result.args.at("label");
+        }
+        
+        std::string password = "";
+        if (result.args.find("password") != result.args.end()) {
+            password = result.args.at("password");
+        }
+        
+        std::string address = wallet_->importAccount(private_key, label, password);
+        
+        if (address.empty()) {
+            std::cout << "❌ Failed to import account" << std::endl;
+            return 1;
+        }
+        
+        std::cout << "✅ Account imported successfully!" << std::endl;
+        std::cout << "   Address: " << address << std::endl;
+        std::cout << "   Label: " << (label.empty() ? "(no label)" : label) << std::endl;
+        
+        // Save wallet
+        wallet_->save("");
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error importing account: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+int Commands::walletListAccounts(const CommandResult& /* result */) {
+    std::cout << "=== Wallet Accounts ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        auto accounts = wallet_->listAccounts();
+        std::string default_account = wallet_->getDefaultAccount();
+        
+        if (accounts.empty()) {
+            std::cout << "📭 No accounts in wallet" << std::endl;
+            std::cout << "   Use 'wallet-create' to create a new account" << std::endl;
+            return 0;
+        }
+        
+        std::cout << "📋 Found " << accounts.size() << " account(s):" << std::endl;
+        std::cout << std::endl;
+        
+        for (const auto& address : accounts) {
+            auto account_info = wallet_->getAccount(address);
+            bool is_default = (address == default_account);
+            
+            std::cout << (is_default ? "⭐ " : "   ") << address;
+            if (account_info && !account_info->label.empty()) {
+                std::cout << " (" << account_info->label << ")";
+            }
+            if (is_default) {
+                std::cout << " [DEFAULT]";
+            }
+            std::cout << std::endl;
+        }
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error listing accounts: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+int Commands::walletExportAccount(const CommandResult& result) {
+    std::cout << "=== Export Wallet Account ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        auto it = result.args.find("address");
+        if (it == result.args.end()) {
+            std::cout << "❌ Address not specified. Use: wallet-export --address <address> --password <password> [--output <file>]" << std::endl;
+            return 1;
+        }
+        
+        std::string address = it->second;
+        std::string password = "";
+        if (result.args.find("password") != result.args.end()) {
+            password = result.args.at("password");
+        }
+        
+        auto exported = wallet_->exportAccount(address, password);
+        
+        if (exported.empty()) {
+            std::cout << "❌ Failed to export account" << std::endl;
+            return 1;
+        }
+        
+        // Check if output file specified
+        if (result.args.find("output") != result.args.end()) {
+            std::string output_file = result.args.at("output");
+            std::ofstream file(output_file);
+            if (!file.is_open()) {
+                std::cout << "❌ Failed to open output file: " << output_file << std::endl;
+                return 1;
+            }
+            file << exported.dump(2);
+            file.close();
+            std::cout << "✅ Account exported to: " << output_file << std::endl;
+        } else {
+            std::cout << "✅ Account export data:" << std::endl;
+            std::cout << exported.dump(2) << std::endl;
+        }
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error exporting account: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+int Commands::walletRemoveAccount(const CommandResult& result) {
+    std::cout << "=== Remove Wallet Account ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        auto it = result.args.find("address");
+        if (it == result.args.end()) {
+            std::cout << "❌ Address not specified. Use: wallet-remove --address <address> [--password <password>]" << std::endl;
+            return 1;
+        }
+        
+        std::string address = it->second;
+        std::string password = "";
+        if (result.args.find("password") != result.args.end()) {
+            password = result.args.at("password");
+        }
+        
+        if (!wallet_->removeAccount(address, password)) {
+            std::cout << "❌ Failed to remove account" << std::endl;
+            return 1;
+        }
+        
+        std::cout << "✅ Account removed: " << address << std::endl;
+        
+        // Save wallet
+        wallet_->save("");
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error removing account: " << e.what() << std::endl;
+        return 1;
+    }
+}
+
+int Commands::walletSetDefault(const CommandResult& result) {
+    std::cout << "=== Set Default Wallet Account ===" << std::endl;
+    
+    if (!wallet_) {
+        std::cout << "❌ Wallet not initialized" << std::endl;
+        return 1;
+    }
+    
+    try {
+        auto it = result.args.find("address");
+        if (it == result.args.end()) {
+            // Show current default
+            std::string default_addr = wallet_->getDefaultAccount();
+            if (default_addr.empty()) {
+                std::cout << "📭 No default account set" << std::endl;
+            } else {
+                std::cout << "⭐ Default account: " << default_addr << std::endl;
+            }
+            return 0;
+        }
+        
+        std::string address = it->second;
+        
+        if (!wallet_->setDefaultAccount(address)) {
+            std::cout << "❌ Failed to set default account" << std::endl;
+            return 1;
+        }
+        
+        std::cout << "✅ Default account set: " << address << std::endl;
+        
+        return 0;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error setting default account: " << e.what() << std::endl;
+        return 1;
+    }
 }
 
 } // namespace cli

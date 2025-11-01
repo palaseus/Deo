@@ -6,6 +6,8 @@
  */
 
 #include "vm/state_store.h"
+#include "storage/leveldb_storage.h"
+#include "storage/state_storage.h"
 #include "utils/logger.h"
 #include <fstream>
 #include <sstream>
@@ -17,12 +19,14 @@ using json = nlohmann::json;
 namespace deo {
 namespace vm {
 
-StateStore::StateStore(const std::string& db_path) 
+StateStore::StateStore(const std::string& db_path, const std::string& storage_backend) 
     : db_path_(db_path)
+    , storage_backend_(storage_backend)
     , db_(nullptr)
     , initialized_(false)
+    , use_leveldb_(storage_backend == "leveldb")
     , in_transaction_(false) {
-    DEO_LOG_DEBUG(VIRTUAL_MACHINE, "StateStore created with path: " + db_path_);
+    DEO_LOG_DEBUG(VIRTUAL_MACHINE, "StateStore created with path: " + db_path_ + " backend: " + storage_backend_);
 }
 
 StateStore::~StateStore() {
@@ -40,25 +44,42 @@ bool StateStore::initialize() {
         // Create database directory if it doesn't exist
         std::filesystem::create_directories(db_path_);
         
-        // For now, we'll use a simple JSON file-based approach
-        // This can be easily replaced with LevelDB later
-        std::string db_file = db_path_ + "/state.json";
+        if (use_leveldb_) {
+            // Initialize LevelDB storage
+            leveldb_storage_ = std::make_shared<storage::LevelDBStateStorage>(db_path_);
+            if (!leveldb_storage_->initialize()) {
+                DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to initialize LevelDB state storage");
+                // Fallback to JSON
+                DEO_LOG_WARNING(VIRTUAL_MACHINE, "Falling back to JSON state storage");
+                use_leveldb_ = false;
+            } else {
+                DEO_LOG_INFO(VIRTUAL_MACHINE, "StateStore initialized with LevelDB backend");
+                initialized_ = true;
+                return true;
+            }
+        }
         
-        // Check if database file exists, if not create it
-        if (!std::filesystem::exists(db_file)) {
-            json empty_db;
-            empty_db["accounts"] = json::object();
-            empty_db["contracts"] = json::object();
-            empty_db["storage"] = json::object();
-            empty_db["metadata"] = json::object();
+        // Initialize JSON storage (either as primary or fallback)
+        if (!use_leveldb_) {
+            std::string db_file = db_path_ + "/state.json";
             
-            std::ofstream file(db_file);
-            file << empty_db.dump(4);
-            file.close();
+            // Check if database file exists, if not create it
+            if (!std::filesystem::exists(db_file)) {
+                json empty_db;
+                empty_db["accounts"] = json::object();
+                empty_db["contracts"] = json::object();
+                empty_db["storage"] = json::object();
+                empty_db["metadata"] = json::object();
+                
+                std::ofstream file(db_file);
+                file << empty_db.dump(4);
+                file.close();
+            }
+            
+            DEO_LOG_INFO(VIRTUAL_MACHINE, "StateStore initialized with JSON backend");
         }
         
         initialized_ = true;
-        DEO_LOG_DEBUG(VIRTUAL_MACHINE, "StateStore initialized successfully");
         return true;
         
     } catch (const std::exception& e) {
@@ -77,6 +98,11 @@ void StateStore::shutdown() {
     // Commit any pending transaction
     if (in_transaction_) {
         commitTransaction();
+    }
+    
+    if (use_leveldb_ && leveldb_storage_) {
+        leveldb_storage_->shutdown();
+        leveldb_storage_.reset();
     }
     
     initialized_ = false;
@@ -115,9 +141,17 @@ bool StateStore::setAccountState(const std::string& address, const AccountState&
     }
     
     try {
-        std::string key = getAccountKey(address);
-        std::string data = serializeAccountState(state);
-        return setValue(key, data);
+        if (use_leveldb_ && leveldb_storage_) {
+            // Convert vm::AccountState to storage::AccountState
+            storage::AccountState storage_state = convertToStorageAccountState(state);
+            storage_state.address = address;
+            return leveldb_storage_->storeAccount(address, storage_state);
+        } else {
+            // Use JSON storage
+            std::string key = getAccountKey(address);
+            std::string data = serializeAccountState(state);
+            return setValue(key, data);
+        }
         
     } catch (const std::exception& e) {
         DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to set account state: " + std::string(e.what()));
@@ -126,6 +160,15 @@ bool StateStore::setAccountState(const std::string& address, const AccountState&
 }
 
 uint256_t StateStore::getBalance(const std::string& address) {
+    if (use_leveldb_ && leveldb_storage_) {
+        auto account = leveldb_storage_->getAccount(address);
+        if (!account) {
+            return uint256_t(0);
+        }
+        // Convert uint64_t to uint256_t
+        return uint256_t(account->balance);
+    }
+    
     auto account = getAccountState(address);
     if (!account) {
         return uint256_t(0);
@@ -149,6 +192,14 @@ bool StateStore::setBalance(const std::string& address, const uint256_t& balance
 }
 
 uint64_t StateStore::getNonce(const std::string& address) {
+    if (use_leveldb_ && leveldb_storage_) {
+        auto account = leveldb_storage_->getAccount(address);
+        if (!account) {
+            return 0;
+        }
+        return account->nonce;
+    }
+    
     auto account = getAccountState(address);
     if (!account) {
         return 0;
@@ -535,6 +586,24 @@ ContractState StateStore::deserializeContractState(const std::string& data) {
     }
     
     return state;
+}
+
+storage::AccountState StateStore::convertToStorageAccountState(const AccountState& vm_state) const {
+    storage::AccountState storage_state;
+    storage_state.balance = vm_state.balance.toUint64(); // Convert uint256_t to uint64_t (may lose precision for very large values)
+    storage_state.nonce = vm_state.nonce;
+    storage_state.code_hash = ""; // Not available in vm::AccountState
+    storage_state.last_updated = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return storage_state;
+}
+
+AccountState StateStore::convertToVMAccountState(const storage::AccountState& storage_state) const {
+    AccountState vm_state;
+    vm_state.balance = uint256_t(storage_state.balance); // Convert uint64_t to uint256_t
+    vm_state.nonce = storage_state.nonce;
+    vm_state.is_contract = !storage_state.code_hash.empty(); // Consider it a contract if code_hash is set
+    return vm_state;
 }
 
 } // namespace vm

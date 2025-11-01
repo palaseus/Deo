@@ -4,7 +4,10 @@
  */
 
 #include "network/transaction_mempool.h"
+#include "core/transaction_fees.h"
+#include "utils/logger.h"
 #include <algorithm>
+#include <limits>
 
 namespace deo {
 namespace network {
@@ -161,10 +164,34 @@ std::vector<std::shared_ptr<core::Transaction>> TransactionMempool::getTransacti
     }
     
     // Sort by priority (fee per byte, then by timestamp)
+    // Calculate fee per byte for each transaction
+    core::TransactionFeeCalculator fee_calculator;
+    core::FeeParameters fee_params;
+    fee_params.base_fee_per_byte = 1; // 1 satoshi per byte
+    fee_params.gas_price = 20; // Default gas price
+    fee_params.priority_fee_multiplier = 1;
+    fee_params.min_fee = 100; // Minimum 100 satoshis
+    fee_params.max_fee = 100000000; // Maximum 1 DEO
+    
     std::sort(sorted_entries.begin(), sorted_entries.end(),
-        [](const auto& a, const auto& b) {
-            // TODO: Implement proper fee calculation
-            // For now, sort by timestamp (newest first)
+        [&fee_calculator, &fee_params](const auto& a, const auto& b) {
+            // Calculate fees for both transactions
+            core::TransactionFee fee_a = fee_calculator.calculateFee(*a.second.transaction, fee_params);
+            core::TransactionFee fee_b = fee_calculator.calculateFee(*b.second.transaction, fee_params);
+            
+            // Calculate transaction sizes
+            uint64_t size_a = a.second.transaction->getSize();
+            uint64_t size_b = b.second.transaction->getSize();
+            
+            // Calculate fee per byte
+            double fee_per_byte_a = (size_a > 0) ? static_cast<double>(fee_a.total_fee) / size_a : 0.0;
+            double fee_per_byte_b = (size_b > 0) ? static_cast<double>(fee_b.total_fee) / size_b : 0.0;
+            
+            // Sort by fee per byte (descending), then by timestamp (newest first)
+            if (std::abs(fee_per_byte_a - fee_per_byte_b) > 0.0001) {
+                return fee_per_byte_a > fee_per_byte_b;
+            }
+            
             return a.second.received_time > b.second.received_time;
         });
     
@@ -189,11 +216,75 @@ bool TransactionMempool::validateTransaction(std::shared_ptr<core::Transaction> 
         return false;
     }
     
-    // TODO: Add more validation checks:
-    // - Check if inputs exist and are unspent
-    // - Check if sender has sufficient balance
-    // - Check transaction size limits
-    // - Check gas limits for smart contracts
+    // Check transaction size limits (max 1MB per transaction)
+    const uint64_t MAX_TRANSACTION_SIZE = 1048576; // 1MB
+    if (transaction->getSize() > MAX_TRANSACTION_SIZE) {
+        DEO_LOG_WARNING(NETWORKING, "Transaction size exceeds limit: " + 
+                       std::to_string(transaction->getSize()) + " > " + 
+                       std::to_string(MAX_TRANSACTION_SIZE));
+        return false;
+    }
+    
+    // Check minimum transaction size (at least header)
+    const uint64_t MIN_TRANSACTION_SIZE = 100; // Minimum reasonable size
+    if (transaction->getSize() < MIN_TRANSACTION_SIZE) {
+        DEO_LOG_WARNING(NETWORKING, "Transaction size too small: " + 
+                       std::to_string(transaction->getSize()) + " < " + 
+                       std::to_string(MIN_TRANSACTION_SIZE));
+        return false;
+    }
+    
+    // Validate inputs are not empty
+    if (transaction->getInputs().empty()) {
+        DEO_LOG_WARNING(NETWORKING, "Transaction has no inputs");
+        return false;
+    }
+    
+    // Validate outputs are not empty
+    if (transaction->getOutputs().empty()) {
+        DEO_LOG_WARNING(NETWORKING, "Transaction has no outputs");
+        return false;
+    }
+    
+    // Check for duplicate inputs (same previous_tx_hash + output_index)
+    std::set<std::string> input_keys;
+    for (const auto& input : transaction->getInputs()) {
+        std::string input_key = input.previous_tx_hash + ":" + std::to_string(input.output_index);
+        if (input_keys.find(input_key) != input_keys.end()) {
+            DEO_LOG_WARNING(NETWORKING, "Transaction has duplicate inputs");
+            return false;
+        }
+        input_keys.insert(input_key);
+    }
+    
+    // Validate fee is sufficient (basic check)
+    core::TransactionFeeCalculator fee_calculator;
+    core::FeeParameters fee_params;
+    fee_params.base_fee_per_byte = 1;
+    fee_params.gas_price = 20;
+    fee_params.priority_fee_multiplier = 1;
+    fee_params.min_fee = 100;
+    fee_params.max_fee = 100000000;
+    
+    core::TransactionFee calculated_fee = fee_calculator.calculateFee(*transaction, fee_params);
+    
+    // Note: Actual balance check requires UTXO set access
+    // This is a structural validation - balance validation should be done at block validation time
+    // Check if fee meets minimum requirements
+    if (calculated_fee.total_fee < fee_params.min_fee) {
+        DEO_LOG_WARNING(NETWORKING, "Transaction fee below minimum: " + 
+                       std::to_string(calculated_fee.total_fee));
+        return false;
+    }
+    
+    // For smart contracts, validate gas limits are reasonable
+    // Maximum gas limit (50M gas, similar to Ethereum)
+    if (transaction->getType() == core::Transaction::Type::CONTRACT) {
+        // Gas validation would be done during execution, but we can check for extreme values here
+        // Note: Transaction doesn't have a direct gas_limit field, this would be in contract-specific fields
+        // Contract transactions are validated during VM execution
+        DEO_LOG_DEBUG(NETWORKING, "Contract transaction detected - gas validation handled by VM");
+    }
     
     return true;
 }
@@ -444,10 +535,40 @@ void TransactionMempool::recordPropagation(const std::string& transaction_id, co
 }
 
 std::string TransactionMempool::calculateTransactionPriority(std::shared_ptr<core::Transaction> transaction) const {
-    // TODO: Implement proper priority calculation based on fee per byte
-    // For now, return a simple priority based on timestamp
-    return std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-        transaction->getTimestamp().time_since_epoch()).count());
+    if (!transaction) {
+        return "low";
+    }
+    
+    // Calculate priority based on fee per byte
+    core::TransactionFeeCalculator fee_calculator;
+    core::FeeParameters fee_params;
+    fee_params.base_fee_per_byte = 1;
+    fee_params.gas_price = 20;
+    fee_params.priority_fee_multiplier = 1;
+    fee_params.min_fee = 100;
+    fee_params.max_fee = 100000000;
+    
+    core::TransactionFee fee = fee_calculator.calculateFee(*transaction, fee_params);
+    uint64_t tx_size = transaction->getSize();
+    
+    if (tx_size == 0) {
+        return "low";
+    }
+    
+    // Calculate fee per byte
+    double fee_per_byte = static_cast<double>(fee.total_fee) / tx_size;
+    
+    // Priority thresholds (in satoshis per byte)
+    const double HIGH_PRIORITY_THRESHOLD = 10.0;   // 10 satoshis per byte
+    const double MEDIUM_PRIORITY_THRESHOLD = 5.0;  // 5 satoshis per byte
+    
+    if (fee_per_byte >= HIGH_PRIORITY_THRESHOLD) {
+        return "high";
+    } else if (fee_per_byte >= MEDIUM_PRIORITY_THRESHOLD) {
+        return "medium";
+    } else {
+        return "low";
+    }
 }
 
 // BlockMempool implementation

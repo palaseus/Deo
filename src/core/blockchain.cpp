@@ -57,18 +57,45 @@ bool Blockchain::initialize() {
         }
     }
     
-    // Initialize storage systems
-    block_storage_ = std::make_unique<storage::BlockStorage>(config_.data_directory + "/blocks");
-    state_storage_ = std::make_unique<storage::StateStorage>(config_.data_directory + "/state");
-    
-    if (!block_storage_->initialize()) {
-        DEO_ERROR(BLOCKCHAIN, "Failed to initialize block storage");
-        return false;
+    // Initialize storage systems based on configured backend
+    if (use_leveldb_) {
+        // Initialize LevelDB storage
+        leveldb_block_storage_ = std::make_shared<storage::LevelDBBlockStorage>(config_.data_directory + "/blocks");
+        leveldb_state_storage_ = std::make_shared<storage::LevelDBStateStorage>(config_.data_directory + "/state");
+        
+        if (!leveldb_block_storage_->initialize()) {
+            DEO_ERROR(BLOCKCHAIN, "Failed to initialize LevelDB block storage");
+            // Fallback to JSON storage
+            DEO_LOG_WARNING(BLOCKCHAIN, "Falling back to JSON block storage");
+            use_leveldb_ = false;
+        } else if (!leveldb_state_storage_->initialize()) {
+            DEO_ERROR(BLOCKCHAIN, "Failed to initialize LevelDB state storage");
+            // Fallback to JSON storage
+            DEO_LOG_WARNING(BLOCKCHAIN, "Falling back to JSON state storage");
+            leveldb_block_storage_->shutdown();
+            leveldb_block_storage_.reset();
+            use_leveldb_ = false;
+        } else {
+            DEO_LOG_INFO(BLOCKCHAIN, "LevelDB storage initialized successfully");
+        }
     }
     
-    if (!state_storage_->initialize()) {
-        DEO_ERROR(BLOCKCHAIN, "Failed to initialize state storage");
-        return false;
+    // Initialize JSON storage (used either as primary or fallback)
+    if (!use_leveldb_) {
+        block_storage_ = std::make_unique<storage::BlockStorage>(config_.data_directory + "/blocks");
+        state_storage_ = std::make_unique<storage::StateStorage>(config_.data_directory + "/state");
+        
+        if (!block_storage_->initialize()) {
+            DEO_ERROR(BLOCKCHAIN, "Failed to initialize block storage");
+            return false;
+        }
+        
+        if (!state_storage_->initialize()) {
+            DEO_ERROR(BLOCKCHAIN, "Failed to initialize state storage");
+            return false;
+        }
+        
+        DEO_LOG_INFO(BLOCKCHAIN, "JSON storage initialized successfully");
     }
     
     // Initialize consensus engine
@@ -115,12 +142,23 @@ void Blockchain::shutdown() {
         consensus_engine_->shutdown();
     }
     
-    if (block_storage_) {
-        block_storage_->shutdown();
-    }
-    
-    if (state_storage_) {
-        state_storage_->shutdown();
+    if (use_leveldb_) {
+        if (leveldb_block_storage_) {
+            leveldb_block_storage_->shutdown();
+            leveldb_block_storage_.reset();
+        }
+        if (leveldb_state_storage_) {
+            leveldb_state_storage_->shutdown();
+            leveldb_state_storage_.reset();
+        }
+    } else {
+        if (block_storage_) {
+            block_storage_->shutdown();
+        }
+        
+        if (state_storage_) {
+            state_storage_->shutdown();
+        }
     }
     
     is_initialized_ = false;
@@ -210,7 +248,12 @@ bool Blockchain::addBlock(std::shared_ptr<Block> block) {
             updateUTXOSet(block);
             
             // Store block
-            if (block_storage_) {
+            if (use_leveldb_ && leveldb_block_storage_) {
+                if (!leveldb_block_storage_->storeBlock(block)) {
+                    DEO_ERROR(BLOCKCHAIN, "Failed to store block in LevelDB");
+                    return false;
+                }
+            } else if (block_storage_) {
                 if (!block_storage_->storeBlock(block)) {
                     DEO_ERROR(BLOCKCHAIN, "Failed to store block");
                     return false;
@@ -411,7 +454,10 @@ bool Blockchain::verifyBlockchain() const {
 }
 
 uint64_t Blockchain::getBalance(const std::string& address) const {
-    if (state_storage_) {
+    if (use_leveldb_ && leveldb_state_storage_) {
+        auto account = leveldb_state_storage_->getAccount(address);
+        return account ? account->balance : 0;
+    } else if (state_storage_) {
         return state_storage_->getBalance(address);
     }
     return 0;
@@ -489,8 +535,16 @@ bool Blockchain::saveState() {
     
     try {
         // Save blockchain state to storage
-        if (block_storage_) {
-            // Save all blocks
+        if (use_leveldb_ && leveldb_block_storage_) {
+            // Save all blocks to LevelDB
+            for (const auto& block : blocks_) {
+                if (!leveldb_block_storage_->storeBlock(block)) {
+                    DEO_LOG_ERROR(BLOCKCHAIN, "Failed to store block in LevelDB: " + block->calculateHash());
+                    return false;
+                }
+            }
+        } else if (block_storage_) {
+            // Save all blocks to JSON storage
             for (const auto& block : blocks_) {
                 if (!block_storage_->storeBlock(block)) {
                     DEO_LOG_ERROR(BLOCKCHAIN, "Failed to store block: " + block->calculateHash());
@@ -499,8 +553,11 @@ bool Blockchain::saveState() {
             }
         }
         
-        if (state_storage_) {
-            // Save state information
+        if (use_leveldb_ && leveldb_state_storage_) {
+            // LevelDB state storage handles persistence internally
+            // No explicit saveState() needed
+        } else if (state_storage_) {
+            // Save state information to JSON
             if (!state_storage_->saveState()) {
                 DEO_LOG_ERROR(BLOCKCHAIN, "Failed to save state");
                 return false;
@@ -521,8 +578,35 @@ bool Blockchain::loadState() {
     
     try {
         // Load blockchain state from storage
-        if (block_storage_) {
-            // Load all blocks from storage
+        if (use_leveldb_ && leveldb_block_storage_) {
+            // Load all blocks from LevelDB
+            uint64_t block_count = leveldb_block_storage_->getBlockCount();
+            if (block_count > 0) {
+                // Load blocks by iterating through heights
+                for (uint64_t height = 0; height < block_count; ++height) {
+                    auto block = leveldb_block_storage_->getBlockByHeight(height);
+                    if (block) {
+                        blocks_.push_back(block);
+                        block_index_[block->calculateHash()] = block;
+                    }
+                }
+                
+                // Update state
+                if (!blocks_.empty()) {
+                    current_height_ = blocks_.back()->getHeader().height;
+                    best_block_hash_ = blocks_.back()->calculateHash();
+                    
+                    // Calculate total difficulty
+                    total_difficulty_ = 0;
+                    for (const auto& block : blocks_) {
+                        total_difficulty_ += block->getHeader().difficulty;
+                    }
+                }
+                
+                DEO_LOG_INFO(BLOCKCHAIN, "Loaded " + std::to_string(blocks_.size()) + " blocks from LevelDB storage");
+            }
+        } else if (block_storage_) {
+            // Load all blocks from JSON storage
             auto loaded_blocks = block_storage_->loadAllBlocks();
             if (!loaded_blocks.empty()) {
                 blocks_ = loaded_blocks;
@@ -545,12 +629,14 @@ bool Blockchain::loadState() {
                     }
                 }
                 
-                DEO_LOG_INFO(BLOCKCHAIN, "Loaded " + std::to_string(blocks_.size()) + " blocks from storage");
+                DEO_LOG_INFO(BLOCKCHAIN, "Loaded " + std::to_string(blocks_.size()) + " blocks from JSON storage");
             }
         }
         
-        if (state_storage_) {
-            // Load state information
+        // Note: LevelDB state storage doesn't require explicit loadState() call
+        // as it reads directly from the database when queried
+        if (!use_leveldb_ && state_storage_) {
+            // Load state information from JSON
             if (!state_storage_->loadState()) {
                 DEO_LOG_WARNING(BLOCKCHAIN, "Failed to load state, starting fresh");
             }

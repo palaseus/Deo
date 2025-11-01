@@ -15,10 +15,23 @@
 #include <map>
 #include <functional>
 #include <vector>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "nlohmann/json.hpp"
 
 namespace deo {
+namespace node {
+    class NodeRuntime;
+}
+
+namespace wallet {
+    class Wallet;
+}
+
 namespace api {
 
 /**
@@ -91,14 +104,46 @@ using JsonRpcMethodHandler = std::function<JsonRpcResponse(const nlohmann::json&
  * access to blockchain functionality including contract deployment,
  * contract calls, state queries, and node management.
  */
+// Forward declaration
+namespace deo {
+namespace node {
+    class NodeRuntime;
+}
+}
+
 class JsonRpcServer {
 public:
     /**
      * @brief Constructor
      * @param port Port to listen on
      * @param host Host address to bind to (default: "127.0.0.1")
+     * @param node_runtime Optional pointer to NodeRuntime for accessing blockchain state
+     * @param username RPC username for authentication (empty = no auth required)
+     * @param password RPC password for authentication (empty = no auth required)
      */
-    explicit JsonRpcServer(uint16_t port, const std::string& host = "127.0.0.1");
+    explicit JsonRpcServer(uint16_t port, const std::string& host = "127.0.0.1", 
+                          node::NodeRuntime* node_runtime = nullptr,
+                          const std::string& username = "",
+                          const std::string& password = "");
+    
+    /**
+     * @brief Set NodeRuntime instance
+     * @param node_runtime Pointer to NodeRuntime
+     */
+    void setNodeRuntime(node::NodeRuntime* node_runtime);
+    
+    /**
+     * @brief Set RPC authentication credentials
+     * @param username RPC username (empty = disable auth)
+     * @param password RPC password (empty = disable auth)
+     */
+    void setAuthentication(const std::string& username, const std::string& password);
+    
+    /**
+     * @brief Check if authentication is enabled
+     * @return True if username and password are set
+     */
+    bool isAuthenticationEnabled() const;
     
     /**
      * @brief Destructor
@@ -144,8 +189,126 @@ public:
 private:
     uint16_t port_;                                    ///< Server port
     std::string host_;                                 ///< Server host
+    node::NodeRuntime* node_runtime_;                  ///< Pointer to NodeRuntime (for blockchain access)
+    std::unique_ptr<wallet::Wallet> wallet_;           ///< Wallet instance for key management
+    std::string rpc_username_;                         ///< RPC authentication username
+    std::string rpc_password_;                         ///< RPC authentication password
     std::atomic<bool> running_;                        ///< Whether server is running
     std::atomic<bool> stop_requested_;                 ///< Stop request flag
+    std::thread server_thread_;                        ///< HTTP server thread
+    int server_socket_;                                ///< Server socket file descriptor
+    
+    // HTTP server methods
+    /**
+     * @brief HTTP server main loop
+     */
+    void serverLoop();
+    
+    /**
+     * @brief Handle a single HTTP client connection
+     * @param client_socket Client socket file descriptor
+     */
+    void handleClient(int client_socket);
+    
+    /**
+     * @brief Parse HTTP request headers and extract body
+     * @param request HTTP request string
+     * @param headers Output map of headers
+     * @param body Output request body
+     * @return True if parsing was successful
+     */
+    bool parseHttpRequest(const std::string& request, std::map<std::string, std::string>& headers, std::string& body);
+    
+    /**
+     * @brief Create HTTP response
+     * @param status_code HTTP status code
+     * @param status_message HTTP status message
+     * @param content_type Content type
+     * @param body Response body
+     * @return HTTP response string
+     */
+    std::string createHttpResponse(int status_code, const std::string& status_message, 
+                                   const std::string& content_type, const std::string& body);
+    
+    /**
+     * @brief Parse HTTP Basic Authentication header
+     * @param auth_header Authorization header value
+     * @param username Output username
+     * @param password Output password
+     * @return True if valid Basic auth header was parsed
+     */
+    bool parseBasicAuth(const std::string& auth_header, std::string& username, std::string& password);
+    
+    /**
+     * @brief Check if request is authenticated
+     * @param headers HTTP request headers
+     * @return True if authenticated (or auth disabled)
+     */
+    bool checkAuthentication(const std::map<std::string, std::string>& headers);
+    
+    /**
+     * @brief Base64 decode (for Basic auth)
+     * @param encoded Base64 encoded string
+     * @return Decoded string
+     */
+    std::string base64Decode(const std::string& encoded);
+    
+    // Wallet method handlers
+    /**
+     * @brief Handle wallet_createAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletCreateAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_importAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletImportAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_listAccounts request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletListAccounts(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_exportAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletExportAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_removeAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletRemoveAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_setDefaultAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletSetDefaultAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_getAccount request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletGetAccount(const nlohmann::json& params);
+    
+    /**
+     * @brief Handle wallet_signTransaction request
+     * @param params Request parameters
+     * @return JSON-RPC response
+     */
+    JsonRpcResponse handleWalletSignTransaction(const nlohmann::json& params);
     
     // Method handlers
     std::map<std::string, JsonRpcMethodHandler> methods_; ///< Registered method handlers

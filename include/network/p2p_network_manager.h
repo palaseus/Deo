@@ -63,6 +63,9 @@ public:
     std::shared_ptr<TransactionMempool> getTransactionMempool() const;
     std::shared_ptr<BlockMempool> getBlockMempool() const;
     
+    // Peer manager access
+    std::shared_ptr<PeerManager> getPeerManager() const;
+    
     // Network statistics
     struct NetworkStats {
         TcpNetworkManager::NetworkStats tcp_stats;

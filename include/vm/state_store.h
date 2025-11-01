@@ -12,7 +12,16 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <chrono>
 #include "vm/uint256.h"
+
+// Forward declarations
+namespace deo {
+namespace storage {
+    struct AccountState;
+    class LevelDBStateStorage;
+} // namespace storage
+} // namespace deo
 
 namespace deo {
 namespace vm {
@@ -47,8 +56,9 @@ public:
     /**
      * @brief Constructor
      * @param db_path Path to the database directory
+     * @param storage_backend Storage backend to use: "leveldb" or "json" (default: "json")
      */
-    explicit StateStore(const std::string& db_path);
+    explicit StateStore(const std::string& db_path, const std::string& storage_backend = "json");
     
     /**
      * @brief Destructor
@@ -213,9 +223,12 @@ public:
 
 private:
     std::string db_path_;                    ///< Database path
-    void* db_;                               ///< Database handle (opaque pointer)
+    std::string storage_backend_;           ///< Storage backend: "leveldb" or "json"
+    void* db_;                               ///< Database handle (opaque pointer, for JSON)
+    std::shared_ptr<storage::LevelDBStateStorage> leveldb_storage_; ///< LevelDB storage (when enabled)
     std::mutex mutex_;                       ///< Thread safety mutex
     bool initialized_;                       ///< Initialization flag
+    bool use_leveldb_;                       ///< Whether LevelDB backend is enabled
     
     // Transaction state
     bool in_transaction_;                    ///< Whether we're in a transaction
@@ -292,6 +305,20 @@ private:
      * @return Contract state
      */
     ContractState deserializeContractState(const std::string& data);
+    
+    /**
+     * @brief Convert vm::AccountState to storage::AccountState
+     * @param vm_state VM account state
+     * @return Storage account state
+     */
+    storage::AccountState convertToStorageAccountState(const AccountState& vm_state) const;
+    
+    /**
+     * @brief Convert storage::AccountState to vm::AccountState
+     * @param storage_state Storage account state
+     * @return VM account state
+     */
+    AccountState convertToVMAccountState(const storage::AccountState& storage_state) const;
 };
 
 } // namespace vm

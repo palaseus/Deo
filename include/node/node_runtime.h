@@ -23,7 +23,10 @@
 #include "vm/vm_block_validator.h"
 #include "vm/state_store.h"
 #include "consensus/proof_of_work.h"
+#include "consensus/consensus_engine.h"
 #include "api/json_rpc_server.h"
+#include "network/p2p_network_manager.h"
+#include "sync/fast_sync.h"
 
 namespace deo {
 namespace node {
@@ -84,13 +87,18 @@ struct NodeConfig {
     std::string data_directory;          ///< Directory for blockchain data
     std::string state_directory;         ///< Directory for state data
     uint16_t p2p_port;                   ///< P2P listening port
+    bool enable_p2p;                     ///< Whether to enable P2P networking
     bool enable_mining;                  ///< Whether to enable mining
+    std::string storage_backend;         ///< Storage backend: "leveldb" or "json" (default: "json")
     uint32_t mining_difficulty;          ///< Mining difficulty target
     uint64_t block_gas_limit;            ///< Maximum gas per block
     uint64_t block_size_limit;           ///< Maximum block size in bytes
     uint32_t max_mempool_size;           ///< Maximum mempool size
     bool enable_json_rpc;                ///< Whether to enable JSON-RPC API
     uint16_t json_rpc_port;              ///< JSON-RPC listening port
+    std::string json_rpc_host;           ///< JSON-RPC host address
+    std::string json_rpc_username;         ///< JSON-RPC authentication username
+    std::string json_rpc_password;       ///< JSON-RPC authentication password
     std::vector<std::string> bootstrap_nodes; ///< Bootstrap nodes for P2P
     
     /**
@@ -100,13 +108,18 @@ struct NodeConfig {
         : data_directory("./data")
         , state_directory("./state")
         , p2p_port(8333)
+        , enable_p2p(false)
         , enable_mining(false)
+        , storage_backend("leveldb")  // Default to LevelDB for better performance
         , mining_difficulty(4)
         , block_gas_limit(10000000)
         , block_size_limit(1000000)
         , max_mempool_size(10000)
         , enable_json_rpc(true)
         , json_rpc_port(8545)
+        , json_rpc_host("127.0.0.1")
+        , json_rpc_username("")
+        , json_rpc_password("")
     {}
 };
 
@@ -124,6 +137,17 @@ struct NodeStatistics {
     std::string best_block_hash;         ///< Best block hash
     bool is_mining;                      ///< Whether currently mining
     bool is_syncing;                     ///< Whether currently syncing
+    sync::SyncStatus sync_status;        ///< Current sync status
+    uint64_t sync_progress;              ///< Sync progress (0-100)
+    uint64_t target_sync_height;         ///< Target height for sync
+    uint64_t current_sync_height;        ///< Current sync height
+    
+    // Performance metrics
+    double transactions_per_second;      ///< Average TPS over last period
+    double avg_block_time_seconds;       ///< Average block production time
+    double sync_speed_blocks_per_sec;     ///< Block synchronization speed
+    uint64_t total_network_messages;     ///< Total network messages processed
+    uint64_t total_storage_operations;    ///< Total storage read/write operations
 };
 
 /**
@@ -211,6 +235,88 @@ public:
      * @return JSON-RPC statistics as JSON string
      */
     std::string getJsonRpcStatistics() const;
+    
+    /**
+     * @brief Get a block by hash
+     * @param hash Block hash
+     * @return Block if found, nullptr otherwise
+     */
+    std::shared_ptr<core::Block> getBlock(const std::string& hash) const;
+    
+    /**
+     * @brief Get a block by height
+     * @param height Block height
+     * @return Block if found, nullptr otherwise
+     */
+    std::shared_ptr<core::Block> getBlock(uint64_t height) const;
+    
+    /**
+     * @brief Get a transaction by ID
+     * @param tx_id Transaction ID
+     * @return Transaction if found, nullptr otherwise
+     */
+    std::shared_ptr<core::Transaction> getTransaction(const std::string& tx_id) const;
+    
+    /**
+     * @brief Get mempool transactions
+     * @param max_count Maximum number of transactions to return (0 = all)
+     * @return Vector of transactions
+     */
+    std::vector<std::shared_ptr<core::Transaction>> getMempoolTransactions(size_t max_count = 0) const;
+    
+    /**
+     * @brief Get balance for an address
+     * @param address Address to check
+     * @return Balance in smallest unit
+     */
+    uint64_t getBalance(const std::string& address) const;
+    
+    /**
+     * @brief Get mempool size
+     * @return Number of transactions in mempool
+     */
+    size_t getMempoolSize() const;
+    
+    /**
+     * @brief Get P2P network manager
+     * @return Pointer to P2P network manager, or nullptr if not enabled
+     */
+    std::shared_ptr<network::P2PNetworkManager> getP2PNetworkManager() const;
+    
+    /**
+     * @brief Broadcast transaction to network
+     * @param transaction Transaction to broadcast
+     */
+    void broadcastTransaction(std::shared_ptr<core::Transaction> transaction);
+    
+    /**
+     * @brief Broadcast block to network
+     * @param block Block to broadcast
+     */
+    void broadcastBlock(std::shared_ptr<core::Block> block);
+    
+    /**
+     * @brief Start chain synchronization
+     * @return True if sync started successfully
+     */
+    bool startSync();
+    
+    /**
+     * @brief Stop chain synchronization
+     */
+    void stopSync();
+    
+    /**
+     * @brief Get sync status
+     * @return Current sync status
+     */
+    sync::SyncStatus getSyncStatus() const;
+    
+    /**
+     * @brief Get sync progress (0.0 to 1.0)
+     * @return Sync progress
+     */
+    double getSyncProgress() const;
 
 private:
     NodeConfig config_;                                  ///< Node configuration
@@ -221,8 +327,14 @@ private:
     std::unique_ptr<core::Blockchain> blockchain_;       ///< Blockchain instance
     std::shared_ptr<vm::StateStore> state_store_;        ///< State store
     std::unique_ptr<vm::VMBlockValidator> block_validator_; ///< VM block validator
-    std::unique_ptr<consensus::ProofOfWork> pow_consensus_; ///< Proof of work consensus
+    std::shared_ptr<consensus::ConsensusEngine> consensus_engine_; ///< Consensus engine
     std::unique_ptr<api::JsonRpcServer> json_rpc_server_; ///< JSON-RPC API server
+    
+    // Networking
+    std::shared_ptr<network::P2PNetworkManager> p2p_network_; ///< P2P network manager
+    
+    // Chain synchronization
+    std::unique_ptr<sync::FastSyncManager> sync_manager_; ///< Chain synchronization manager
     
     // Mempool
     std::unique_ptr<TransactionMempool> mempool_;        ///< Transaction mempool
@@ -239,6 +351,14 @@ private:
     // Statistics
     mutable std::mutex stats_mutex_;                     ///< Statistics mutex
     NodeStatistics statistics_;                          ///< Node statistics
+    
+    // Performance tracking
+    std::chrono::system_clock::time_point start_time_;   ///< Node start time
+    std::chrono::system_clock::time_point last_block_time_; ///< Last block production time
+    uint64_t transaction_count_window_;                   ///< Transaction count in current window
+    std::chrono::system_clock::time_point tps_window_start_; ///< TPS calculation window start
+    std::vector<double> recent_block_times_;              ///< Recent block production times (for average)
+    static constexpr size_t MAX_RECENT_BLOCK_TIMES = 100; ///< Maximum recent block times to track
     
     /**
      * @brief Block production loop
@@ -292,6 +412,18 @@ private:
      * @return True if initialized successfully
      */
     bool initializeGenesisBlock();
+    
+    /**
+     * @brief Handle incoming transaction from network
+     * @param transaction Transaction received from network
+     */
+    void handleIncomingTransaction(std::shared_ptr<core::Transaction> transaction);
+    
+    /**
+     * @brief Handle incoming block from network
+     * @param block Block received from network
+     */
+    void handleIncomingBlock(std::shared_ptr<core::Block> block);
 };
 
 } // namespace node

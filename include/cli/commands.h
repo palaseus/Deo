@@ -14,6 +14,7 @@
 #include "core/blockchain.h"
 #include "node/node_runtime.h"
 #include "cli/contract_cli.h"
+#include "wallet/wallet.h"
 
 namespace deo {
 namespace core {
@@ -653,10 +654,54 @@ public:
      * @return Exit code
      */
     int verifyContract(const CommandResult& result);
+    
+    // Wallet commands
+    /**
+     * @brief Create a new wallet account
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletCreateAccount(const CommandResult& result);
+    
+    /**
+     * @brief Import wallet account from private key
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletImportAccount(const CommandResult& result);
+    
+    /**
+     * @brief List all wallet accounts
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletListAccounts(const CommandResult& result);
+    
+    /**
+     * @brief Export wallet account
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletExportAccount(const CommandResult& result);
+    
+    /**
+     * @brief Remove wallet account
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletRemoveAccount(const CommandResult& result);
+    
+    /**
+     * @brief Set default wallet account
+     * @param result Command result
+     * @return Exit code
+     */
+    int walletSetDefault(const CommandResult& result);
 
 private:
     std::unique_ptr<core::Blockchain> blockchain_; ///< Blockchain instance
     std::unique_ptr<ContractCLI> contract_cli_; ///< Contract CLI manager
+    std::unique_ptr<wallet::Wallet> wallet_; ///< Wallet instance
     
     /**
      * @brief Initialize blockchain if not already initialized

@@ -142,6 +142,8 @@ set(SOURCES
     src/utils/config.cpp
     src/utils/error_handler.cpp
     src/utils/logger.cpp
+    src/utils/performance_monitor.cpp
+    src/wallet/wallet.cpp
 )
 
 # Header files
@@ -204,71 +206,58 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     include
 )
 
-# Test sources
-set(TEST_SOURCES
-    tests/vm/test_vm.cpp
-    tests/vm/test_uint256.cpp
-    tests/vm/test_vm_enhanced.cpp
-    tests/core/test_blockchain.cpp
-    tests/core/test_blockchain_enhanced.cpp
-    tests/core/test_blockchain_simple.cpp
-    tests/core/test_block.cpp
-    tests/core/test_transaction.cpp
-    tests/core/test_transaction_fees.cpp
-    tests/consensus/test_proof_of_work.cpp
-    tests/consensus/test_proof_of_stake.cpp
-    tests/consensus/test_proof_of_stake_safe.cpp
-    tests/consensus/test_consensus_enhanced.cpp
-    tests/network/test_peer_connection_manager.cpp
-    tests/network/test_network_enhanced.cpp
-    tests/network/test_peer_authentication.cpp
-    tests/network/test_peer_reputation.cpp
-    tests/storage/test_leveldb_storage.cpp
-    tests/storage/test_block_pruning.cpp
-    tests/storage/test_storage_enhanced.cpp
-    tests/sync/test_fast_sync.cpp
-    tests/testing/test_scale_testing.cpp
-    tests/testing/test_adversarial_testing.cpp
-    tests/integration/test_integration_comprehensive.cpp
-    tests/compiler/test_contract_compiler.cpp
-    tests/crypto/test_crypto.cpp
-    tests/utils/test_utils.cpp
-    tests/cli/test_cli.cpp
-)
+# Test sources - only include files that actually exist
+set(TEST_SOURCES)
+file(GLOB_RECURSE TEST_SOURCES "${CMAKE_SOURCE_DIR}/tests/*.cpp")
 
-# Create test executable (exclude main.cpp)
-set(TEST_SOURCES_WITHOUT_MAIN ${SOURCES})
-list(REMOVE_ITEM TEST_SOURCES_WITHOUT_MAIN main.cpp)
-add_executable(${PROJECT_NAME}_tests ${TEST_SOURCES} ${TEST_SOURCES_WITHOUT_MAIN} ${HEADERS})
+# Filter out direct_vm_test.cpp (it has its own main())
+list(REMOVE_ITEM TEST_SOURCES "${CMAKE_SOURCE_DIR}/tests/direct_vm_test.cpp")
 
-# Link libraries for tests
-target_link_libraries(${PROJECT_NAME}_tests 
-    ${LEVELDB_LIBRARY}
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    Threads::Threads
-    nlohmann_json::nlohmann_json
-    gtest_main
-    gtest
-)
+# Filter out test files that don't exist (optional)
+if(NOT TEST_SOURCES)
+    message(WARNING "No test files found in tests/ directory")
+    set(BUILD_TESTS OFF CACHE BOOL "Build tests" FORCE)
+else()
+    message(STATUS "Found test files: ${TEST_SOURCES}")
+    set(BUILD_TESTS ON CACHE BOOL "Build tests" FORCE)
+endif()
 
-# Include directories for tests
-target_include_directories(${PROJECT_NAME}_tests PRIVATE 
-    ${LEVELDB_INCLUDE_DIR}
-    include
-)
+# Only build tests if test files exist and BUILD_TESTS is enabled
+if(BUILD_TESTS AND TEST_SOURCES)
+    # Create test executable (exclude main.cpp)
+    set(TEST_SOURCES_WITHOUT_MAIN ${SOURCES})
+    list(REMOVE_ITEM TEST_SOURCES_WITHOUT_MAIN main.cpp)
+    add_executable(${PROJECT_NAME}_tests ${TEST_SOURCES} ${TEST_SOURCES_WITHOUT_MAIN} ${HEADERS})
 
-# Enable testing
-enable_testing()
-
-# Add test
-add_test(NAME ${PROJECT_NAME}_tests COMMAND ${PROJECT_NAME}_tests)
-
-# Set test properties
-set_tests_properties(${PROJECT_NAME}_tests PROPERTIES
-    TIMEOUT 300
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+    # Link libraries for tests
+    target_link_libraries(${PROJECT_NAME}_tests 
+        ${LEVELDB_LIBRARY}
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        Threads::Threads
+        nlohmann_json::nlohmann_json
+        gtest
+        gtest_main
+    )
+    
+    # Include directories for tests
+    target_include_directories(${PROJECT_NAME}_tests PRIVATE 
+        ${LEVELDB_INCLUDE_DIR}
+        include
+    )
+    
+    # Enable testing
+    enable_testing()
+    
+    # Add test
+    add_test(NAME ${PROJECT_NAME}_tests COMMAND ${PROJECT_NAME}_tests)
+    
+    # Set test properties
+    set_tests_properties(${PROJECT_NAME}_tests PROPERTIES
+        TIMEOUT 300
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endif()
 
 # Custom targets for different build types
 add_custom_target(debug_sanitized

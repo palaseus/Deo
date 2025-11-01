@@ -82,22 +82,72 @@ std::unique_ptr<NetworkMessage> TcpConnection::receiveMessage() {
         }
         
         message_length = ntohl(message_length);
-        if (message_length > 1024 * 1024) { // 1MB limit
-            DEO_LOG_ERROR(NETWORKING, "Message too large from " + peer_address_ + ": " + std::to_string(message_length));
+        
+        // Enhanced input validation: check for suspicious values
+        const size_t MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB limit
+        const size_t MIN_MESSAGE_SIZE = 1; // At least type byte
+        
+        if (message_length == 0 || message_length < MIN_MESSAGE_SIZE) {
+            DEO_LOG_WARNING(NETWORKING, "Invalid message length (zero or negative) from " + peer_address_);
             return nullptr;
         }
         
-        // Receive message data
+        if (message_length > MAX_MESSAGE_SIZE) {
+            DEO_LOG_ERROR(NETWORKING, "Message too large from " + peer_address_ + ": " + 
+                         std::to_string(message_length) + " bytes (max: " + std::to_string(MAX_MESSAGE_SIZE) + ")");
+            // Report misbehavior for sending oversized messages
+            return nullptr;
+        }
+        
+        // Additional check: prevent integer overflow in buffer allocation
+        if (message_length > SIZE_MAX / 2) {
+            DEO_LOG_ERROR(NETWORKING, "Message size would cause overflow: " + std::to_string(message_length));
+            return nullptr;
+        }
+        
+        // Receive message data with bounds checking
         std::vector<char> buffer(message_length);
-        received = recv(socket_fd_, buffer.data(), message_length, MSG_DONTWAIT);
-        if (received != static_cast<ssize_t>(message_length)) {
-            DEO_LOG_ERROR(NETWORKING, "Failed to receive message data from " + peer_address_);
+        size_t total_received = 0;
+        
+        // Handle partial receives (though MSG_DONTWAIT means this should be rare)
+        while (total_received < message_length) {
+            ssize_t bytes_received = recv(socket_fd_, buffer.data() + total_received, 
+                                   message_length - total_received, MSG_DONTWAIT);
+            if (bytes_received <= 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // For non-blocking, return nullptr if not all data available
+                    if (total_received == 0) {
+                        return nullptr; // No data available
+                    }
+                    // Partial receive - log and return nullptr (incomplete message)
+                    DEO_LOG_WARNING(NETWORKING, "Partial message received from " + peer_address_ + 
+                                   ": " + std::to_string(total_received) + "/" + std::to_string(message_length));
+                    return nullptr;
+                }
+                DEO_LOG_ERROR(NETWORKING, "Failed to receive message data from " + peer_address_);
+                return nullptr;
+            }
+            total_received += static_cast<size_t>(bytes_received);
+        }
+        
+        // Validate we received exactly the expected amount
+        if (total_received != message_length) {
+            DEO_LOG_ERROR(NETWORKING, "Message length mismatch from " + peer_address_ + 
+                         ": expected " + std::to_string(message_length) + 
+                         ", received " + std::to_string(total_received));
             return nullptr;
         }
         
-        // Deserialize message
+        // Deserialize message with error handling
         std::string serialized(buffer.begin(), buffer.end());
-        nlohmann::json message_json = nlohmann::json::parse(serialized);
+        nlohmann::json message_json;
+        try {
+            message_json = nlohmann::json::parse(serialized);
+        } catch (const nlohmann::json::parse_error& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to parse JSON message from " + peer_address_ + 
+                         ": " + std::string(e.what()));
+            return nullptr;
+        }
         
         // Create appropriate message type based on JSON
         MessageType type = static_cast<MessageType>(message_json["type"].get<int>());

@@ -25,6 +25,7 @@
 // #include "network/peer_manager.h" // Temporarily disabled
 #include "storage/block_storage.h"
 #include "storage/state_storage.h"
+#include "storage/leveldb_storage.h"
 #include "vm/virtual_machine.h"
 #include "utils/config.h"
 
@@ -61,6 +62,7 @@ struct BlockchainConfig {
     uint32_t initial_difficulty;       ///< Initial mining difficulty
     bool enable_mining;                ///< Whether to enable mining
     bool enable_networking;            ///< Whether to enable networking
+    std::string storage_backend;       ///< Storage backend: "leveldb" or "json" (default: "json")
 };
 
 /**
@@ -301,6 +303,22 @@ public:
      * @return True if import was successful
      */
     bool importBlockchain(const std::string& filename);
+    
+    /**
+     * @brief Get LevelDB block storage (for FastSyncManager)
+     * @return Shared pointer to LevelDB block storage, or nullptr if not using LevelDB
+     */
+    std::shared_ptr<storage::LevelDBBlockStorage> getLevelDBBlockStorage() const {
+        return use_leveldb_ ? leveldb_block_storage_ : nullptr;
+    }
+    
+    /**
+     * @brief Get LevelDB state storage (for FastSyncManager)
+     * @return Shared pointer to LevelDB state storage, or nullptr if not using LevelDB
+     */
+    std::shared_ptr<storage::LevelDBStateStorage> getLevelDBStateStorage() const {
+        return use_leveldb_ ? leveldb_state_storage_ : nullptr;
+    }
 
 private:
     BlockchainConfig config_;                                    ///< Blockchain configuration
@@ -389,10 +407,12 @@ private:
     // Core components
     std::unique_ptr<consensus::ConsensusEngine> consensus_engine_;
     // std::unique_ptr<network::PeerManager> peer_manager_; // Temporarily disabled
-    std::unique_ptr<storage::BlockStorage> block_storage_;
-    std::unique_ptr<storage::StateStorage> state_storage_;
+    std::unique_ptr<storage::BlockStorage> block_storage_; ///< JSON block storage
+    std::shared_ptr<storage::LevelDBBlockStorage> leveldb_block_storage_; ///< LevelDB block storage (when enabled)
+    std::unique_ptr<storage::StateStorage> state_storage_; ///< JSON state storage
+    std::shared_ptr<storage::LevelDBStateStorage> leveldb_state_storage_; ///< LevelDB state storage (when enabled)
+    bool use_leveldb_; ///< Whether LevelDB backend is enabled
     std::unique_ptr<vm::VirtualMachine> virtual_machine_;
-    
 };
 
 } // namespace core

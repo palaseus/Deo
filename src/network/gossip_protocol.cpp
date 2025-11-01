@@ -4,7 +4,12 @@
  */
 
 #include "network/peer_manager.h"
+#include "network/network_messages.h"
+#include "core/block.h"
+#include "core/transaction.h"
+#include "utils/logger.h"
 #include <algorithm>
+#include <sstream>
 
 namespace deo {
 namespace network {
@@ -23,28 +28,70 @@ GossipProtocol::GossipProtocol(std::shared_ptr<TcpNetworkManager> network_manage
 GossipProtocol::~GossipProtocol() {
 }
 
-void GossipProtocol::broadcastTransaction(const std::string& /* transaction_data */) {
-    // Create transaction message using the correct message type
-    auto tx_message = std::make_unique<TxMessage>();
-    // Note: We would need to parse transaction_data and create a Transaction object
-    // For now, we'll just log the broadcast attempt
-    
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    stats_.transactions_broadcasted++;
-    
-    DEO_LOG_DEBUG(NETWORKING, "Transaction broadcast requested (implementation pending)");
+void GossipProtocol::broadcastTransaction(const std::string& transaction_data) {
+    try {
+        // Parse transaction data (expecting JSON string)
+        nlohmann::json tx_json;
+        try {
+            tx_json = nlohmann::json::parse(transaction_data);
+        } catch (const nlohmann::json::parse_error&) {
+            // If parsing fails, assume it's already JSON object (could be passed as object)
+            DEO_LOG_ERROR(NETWORKING, "Failed to parse transaction data as JSON");
+            return;
+        }
+        
+        // Create Transaction object from JSON
+        auto transaction = std::make_shared<core::Transaction>();
+        if (!transaction->fromJson(tx_json)) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to deserialize transaction from JSON");
+            return;
+        }
+        
+        // Create and broadcast TxMessage
+        TxMessage tx_msg(transaction);
+        broadcastMessage(tx_msg);
+        
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.transactions_broadcasted++;
+        
+        DEO_LOG_INFO(NETWORKING, "Broadcasted transaction via gossip protocol");
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to broadcast transaction: " + std::string(e.what()));
+    }
 }
 
-void GossipProtocol::broadcastBlock(const std::string& /* block_data */) {
-    // Create block message using the correct message type
-    auto block_message = std::make_unique<BlockMessage>();
-    // Note: We would need to parse block_data and create a Block object
-    // For now, we'll just log the broadcast attempt
-    
-    std::lock_guard<std::mutex> lock(stats_mutex_);
-    stats_.blocks_broadcasted++;
-    
-    DEO_LOG_DEBUG(NETWORKING, "Block broadcast requested (implementation pending)");
+void GossipProtocol::broadcastBlock(const std::string& block_data) {
+    try {
+        // Parse block data (expecting JSON string)
+        nlohmann::json block_json;
+        try {
+            block_json = nlohmann::json::parse(block_data);
+        } catch (const nlohmann::json::parse_error&) {
+            // If parsing fails, assume it's already JSON object
+            DEO_LOG_ERROR(NETWORKING, "Failed to parse block data as JSON");
+            return;
+        }
+        
+        // Create Block object from JSON
+        auto block = std::make_shared<core::Block>();
+        if (!block->fromJson(block_json)) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to deserialize block from JSON");
+            return;
+        }
+        
+        // Create and broadcast BlockMessage
+        BlockMessage block_msg(block);
+        broadcastMessage(block_msg);
+        
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        stats_.blocks_broadcasted++;
+        
+        DEO_LOG_INFO(NETWORKING, "Broadcasted block via gossip protocol");
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to broadcast block: " + std::string(e.what()));
+    }
 }
 
 void GossipProtocol::broadcastMessage(const NetworkMessage& message) {
@@ -180,10 +227,20 @@ void GossipProtocol::cleanupOldMessages() {
 }
 
 std::string GossipProtocol::calculateMessageHash(const NetworkMessage& message) const {
-    // Use a simple hash based on message type and current time
-    std::string data = std::to_string(static_cast<int>(message.getType())) + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
-    return std::to_string(std::hash<std::string>{}(data));
+    try {
+        // Use message serialization for hash calculation (more accurate)
+        auto msg_json = message.toJson();
+        std::string serialized = msg_json.dump();
+        
+        // Create hash from serialized message
+        return std::to_string(std::hash<std::string>{}(serialized));
+    } catch (const std::exception& e) {
+        // Fallback to simple hash
+        std::string data = std::to_string(static_cast<int>(message.getType())) + 
+                          std::to_string(std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::system_clock::now().time_since_epoch()).count());
+        return std::to_string(std::hash<std::string>{}(data));
+    }
 }
 
 } // namespace network

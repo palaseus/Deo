@@ -10,6 +10,7 @@
 
 #include "network/peer_manager.h"
 #include "network/network_messages.h"
+#include "network/tcp_network.h"
 #include "core/blockchain.h"
 #include "core/transaction.h"
 #include "consensus/consensus_engine.h"
@@ -241,6 +242,7 @@ private:
     NetworkConfig config_;
     NetworkStats stats_;
     std::shared_ptr<PeerManager> peer_manager_;
+    std::shared_ptr<TcpNetworkManager> tcp_network_manager_;
     std::shared_ptr<core::Blockchain> blockchain_;
     std::shared_ptr<consensus::ConsensusEngine> consensus_engine_;
     

@@ -235,6 +235,10 @@ std::shared_ptr<BlockMempool> P2PNetworkManager::getBlockMempool() const {
     return block_mempool_;
 }
 
+std::shared_ptr<PeerManager> P2PNetworkManager::getPeerManager() const {
+    return peer_manager_;
+}
+
 P2PNetworkManager::NetworkStats P2PNetworkManager::getNetworkStats() const {
     NetworkStats stats;
     
@@ -366,8 +370,61 @@ void P2PNetworkManager::handleGetDataMessage(const NetworkMessage& message, cons
             return;
         }
         
-        // TODO: Implement data retrieval and response
-        DEO_LOG_DEBUG(NETWORKING, "Handled getdata request from " + peer_address);
+        // Retrieve requested items and send responses
+        if (!blockchain_) {
+            DEO_LOG_WARNING(NETWORKING, "Cannot handle getdata: blockchain not available");
+            return;
+        }
+        
+        const std::vector<std::string>& requested_items = getdata_message->items_;
+        
+        for (const std::string& item_hash : requested_items) {
+            // Try to retrieve as block first
+            auto block = blockchain_->getBlock(item_hash);
+            if (block) {
+                // Send block message
+                BlockMessage block_msg(block);
+                tcp_manager_->sendToPeer(peer_address, block_msg);
+                
+                // Mark good behavior
+                size_t colon_pos = peer_address.find(':');
+                if (colon_pos != std::string::npos) {
+                    std::string addr = peer_address.substr(0, colon_pos);
+                    uint16_t port = std::stoi(peer_address.substr(colon_pos + 1));
+                    peer_manager_->reportGoodBehavior(addr, port, 2);
+                }
+                
+                DEO_LOG_DEBUG(NETWORKING, "Sent block " + item_hash + " to " + peer_address);
+                continue;
+            }
+            
+            // Try to retrieve as transaction from mempool or blockchain
+            auto tx = transaction_mempool_ ? transaction_mempool_->getTransaction(item_hash) : nullptr;
+            if (!tx && blockchain_) {
+                // Could try to get from blockchain if it has such a method
+                // For now, we'll only check mempool
+            }
+            
+            if (tx) {
+                // Send transaction message
+                TxMessage tx_msg(tx);
+                tcp_manager_->sendToPeer(peer_address, tx_msg);
+                
+                size_t colon_pos = peer_address.find(':');
+                if (colon_pos != std::string::npos) {
+                    std::string addr = peer_address.substr(0, colon_pos);
+                    uint16_t port = std::stoi(peer_address.substr(colon_pos + 1));
+                    peer_manager_->reportGoodBehavior(addr, port, 1);
+                }
+                
+                DEO_LOG_DEBUG(NETWORKING, "Sent transaction " + item_hash + " to " + peer_address);
+            } else {
+                DEO_LOG_DEBUG(NETWORKING, "Requested item not found: " + item_hash);
+            }
+        }
+        
+        DEO_LOG_DEBUG(NETWORKING, "Handled getdata request from " + peer_address + " for " + 
+                     std::to_string(requested_items.size()) + " items");
         
     } catch (const std::exception& e) {
         DEO_LOG_ERROR(NETWORKING, "Failed to handle getdata request: " + std::string(e.what()));

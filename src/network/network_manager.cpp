@@ -58,6 +58,13 @@ bool NetworkManager::initialize(std::shared_ptr<core::Blockchain> blockchain,
         return false;
     }
     
+    // Initialize TCP network manager for actual message sending
+    tcp_network_manager_ = std::make_shared<TcpNetworkManager>(config_.listen_port);
+    if (!tcp_network_manager_->initialize()) {
+        DEO_ERROR(NETWORKING, "Failed to initialize TCP network manager");
+        return false;
+    }
+    
     // Validate network configuration
     if (config_.max_connections == 0) {
         DEO_WARNING(NETWORKING, "Max connections is 0, setting to default 50");
@@ -88,6 +95,11 @@ void NetworkManager::shutdown() {
     }
     
     stop();
+    
+    if (tcp_network_manager_) {
+        tcp_network_manager_->shutdown();
+        tcp_network_manager_.reset();
+    }
     
     if (peer_manager_) {
         peer_manager_->shutdown();
@@ -303,15 +315,20 @@ bool NetworkManager::sendBlockToPeer(const std::string& address, uint16_t port,
     BlockMessage block_msg(block);
     auto message_data = block_msg.serialize();
     
-    // Send to peer
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
+    // Send block message to peer via TCP network manager
     bool success = false;
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would send block to peer " + address + ":" + std::to_string(port));
-        success = true; // Placeholder - assume success for connected peers
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            // TcpNetworkManager::sendToPeer uses peer address string matching
+            // It matches against connection->getPeerAddress() which returns just the IP
+            tcp_network_manager_->sendToPeer(address, block_msg);
+            success = true;
+            DEO_LOG_DEBUG(NETWORKING, "Sent block to peer " + address + ":" + std::to_string(port));
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send block to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            success = false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
     }
@@ -343,15 +360,19 @@ bool NetworkManager::sendTransactionToPeer(const std::string& address, uint16_t 
     TxMessage tx_msg(transaction);
     auto message_data = tx_msg.serialize();
     
-    // Send to peer
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
+    // Send transaction message to peer via TCP network manager
     bool success = false;
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would send transaction to peer " + address + ":" + std::to_string(port));
-        success = true; // Placeholder - assume success for connected peers
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            // TcpNetworkManager::sendToPeer uses peer address string matching
+            tcp_network_manager_->sendToPeer(address, tx_msg);
+            success = true;
+            DEO_LOG_DEBUG(NETWORKING, "Sent transaction to peer " + address + ":" + std::to_string(port));
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send transaction to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            success = false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
     }
@@ -376,13 +397,18 @@ bool NetworkManager::requestBlocks(const std::string& address, uint16_t port,
     GetDataMessage getdata_msg(block_hashes);
     auto message_data = getdata_msg.serialize();
     
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would request blocks from peer " + address + ":" + std::to_string(port));
-        return true; // Placeholder - assume success for connected peers
+    // Send GETDATA message to peer via TCP network manager
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            // TcpNetworkManager::sendToPeer uses peer address string matching
+            tcp_network_manager_->sendToPeer(address, getdata_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent block request to peer " + address + ":" + std::to_string(port));
+            return true;
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send block request to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            return false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
         return false;
@@ -400,13 +426,18 @@ bool NetworkManager::requestTransactions(const std::string& address, uint16_t po
     GetDataMessage getdata_msg(tx_hashes);
     auto message_data = getdata_msg.serialize();
     
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would request transactions from peer " + address + ":" + std::to_string(port));
-        return true; // Placeholder - assume success for connected peers
+    // Send GETDATA message to peer via TCP network manager
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            // TcpNetworkManager::sendToPeer uses peer address string matching
+            tcp_network_manager_->sendToPeer(address, getdata_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent transaction request to peer " + address + ":" + std::to_string(port));
+            return true;
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send transaction request to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            return false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
         return false;
@@ -415,15 +446,40 @@ bool NetworkManager::requestTransactions(const std::string& address, uint16_t po
 
 bool NetworkManager::connectToPeer(const std::string& address, uint16_t port) {
     stats_.connection_attempts++;
-    // PeerManager doesn't have connectPeer method
-    // return peer_manager_->connectPeer(address, port);
-    return peer_manager_->addPeer(address, port);
+    
+    // Use TcpNetworkManager to establish actual connection
+    if (tcp_network_manager_) {
+        if (tcp_network_manager_->connectToPeer(address, port)) {
+            // Add peer to peer manager for tracking
+            if (peer_manager_) {
+                peer_manager_->addPeer(address, port);
+            }
+            stats_.successful_connections++;
+            DEO_LOG_INFO(NETWORKING, "Connected to peer " + address + ":" + std::to_string(port));
+            return true;
+        } else {
+            stats_.failed_connections++;
+            DEO_LOG_WARNING(NETWORKING, "Failed to connect to peer " + address + ":" + std::to_string(port));
+            return false;
+        }
+    }
+    
+    // Fallback to just adding to peer manager
+    return peer_manager_ ? peer_manager_->addPeer(address, port) : false;
 }
 
 bool NetworkManager::disconnectFromPeer(const std::string& address, uint16_t port) {
-    // PeerManager doesn't have disconnectPeer method
-    // return peer_manager_->disconnectPeer(address, port);
-    peer_manager_->removePeer(address, port);
+    // Disconnect via TcpNetworkManager
+    if (tcp_network_manager_) {
+        tcp_network_manager_->disconnectPeer(address, port);
+    }
+    
+    // Remove from peer manager
+    if (peer_manager_) {
+        peer_manager_->removePeer(address, port);
+    }
+    
+    DEO_LOG_INFO(NETWORKING, "Disconnected from peer " + address + ":" + std::to_string(port));
     return true;
 }
 
@@ -587,9 +643,51 @@ void NetworkManager::handleMessage(const std::string& peer_address, uint16_t pee
     stats_.total_messages_received++;
     stats_.total_bytes_received += message_data.size();
     
-    // TODO: Implement proper message handling
-    // The NetworkMessage classes are missing many required methods
-    DEO_LOG_DEBUG(NETWORKING, "Received message of type " + std::to_string(static_cast<int>(message->getType())) + " from " + peer_address + ":" + std::to_string(peer_port));
+    // Route message to appropriate handler based on type
+    // Convert unique_ptr to shared_ptr for handlers (handlers expect shared_ptr)
+    std::shared_ptr<NetworkMessage> shared_message(std::move(message));
+    MessageType msg_type = shared_message->getType();
+    switch (msg_type) {
+        case MessageType::HELLO: {
+            auto hello_msg = std::dynamic_pointer_cast<HelloMessage>(shared_message);
+            handleHelloMessage(peer_address, peer_port, hello_msg);
+            break;
+        }
+        case MessageType::INV: {
+            auto inv_msg = std::dynamic_pointer_cast<InvMessage>(shared_message);
+            handleInvMessage(peer_address, peer_port, inv_msg);
+            break;
+        }
+        case MessageType::GETDATA: {
+            auto getdata_msg = std::dynamic_pointer_cast<GetDataMessage>(shared_message);
+            handleGetDataMessage(peer_address, peer_port, getdata_msg);
+            break;
+        }
+        case MessageType::BLOCK: {
+            auto block_msg = std::dynamic_pointer_cast<BlockMessage>(shared_message);
+            handleBlockMessage(peer_address, peer_port, block_msg);
+            break;
+        }
+        case MessageType::TX: {
+            auto tx_msg = std::dynamic_pointer_cast<TxMessage>(shared_message);
+            handleTxMessage(peer_address, peer_port, tx_msg);
+            break;
+        }
+        case MessageType::PING: {
+            auto ping_msg = std::dynamic_pointer_cast<PingMessage>(shared_message);
+            handlePingMessage(peer_address, peer_port, ping_msg);
+            break;
+        }
+        case MessageType::PONG: {
+            auto pong_msg = std::dynamic_pointer_cast<PongMessage>(shared_message);
+            handlePongMessage(peer_address, peer_port, pong_msg);
+            break;
+        }
+        default:
+            DEO_LOG_DEBUG(NETWORKING, "Unhandled message type " + std::to_string(static_cast<int>(msg_type)) + 
+                         " from " + peer_address + ":" + std::to_string(peer_port));
+            break;
+    }
 }
 
 void NetworkManager::handleHelloMessage(const std::string& peer_address, uint16_t peer_port,
@@ -637,38 +735,141 @@ void NetworkManager::handleInvMessage(const std::string& peer_address, uint16_t 
 }
 
 void NetworkManager::handleGetDataMessage(const std::string& peer_address, uint16_t peer_port,
-                                         std::shared_ptr<GetDataMessage> /* message */) {
-    // TODO: Implement proper GETDATA message handling
-    // The NetworkMessage classes are missing many required methods
+                                         std::shared_ptr<GetDataMessage> message) {
+    if (!message) {
+        DEO_LOG_ERROR(NETWORKING, "Null GETDATA message from " + peer_address + ":" + std::to_string(peer_port));
+        return;
+    }
+    
     DEO_LOG_DEBUG(NETWORKING, "Received GETDATA message from " + peer_address + ":" + std::to_string(peer_port));
+    
+    // Process requested items
+    // GetDataMessage should have a method to get the requested item hashes
+    // For now, we'll log and acknowledge
+    if (blockchain_) {
+        // In full implementation, we would:
+        // 1. Parse requested item hashes from message
+        // 2. Look up blocks/transactions in blockchain
+        // 3. Send BLOCK or TX messages back
+        DEO_LOG_DEBUG(NETWORKING, "Processing GETDATA request - would look up and send items");
+        
+        // Mark peer activity
+        if (peer_manager_) {
+            peer_manager_->updatePeerActivity(peer_address, peer_port);
+            peer_manager_->reportGoodBehavior(peer_address, peer_port, 1);
+        }
+    }
 }
 
 void NetworkManager::handleBlockMessage(const std::string& peer_address, uint16_t peer_port,
-                                       std::shared_ptr<BlockMessage> /* message */) {
-    // TODO: Implement proper BLOCK message handling
-    // The NetworkMessage classes are missing many required methods
+                                       std::shared_ptr<BlockMessage> message) {
+    if (!message) {
+        DEO_LOG_ERROR(NETWORKING, "Null BLOCK message from " + peer_address + ":" + std::to_string(peer_port));
+        return;
+    }
+    
     DEO_LOG_DEBUG(NETWORKING, "Received BLOCK message from " + peer_address + ":" + std::to_string(peer_port));
+    
+    // Extract block from message
+    // BlockMessage should have getBlock() method
+    // For now, we'll handle the message structure
+    if (blockchain_ && consensus_engine_) {
+        // In full implementation, we would:
+        // 1. Extract block from BlockMessage
+        // 2. Validate block
+        // 3. Add to blockchain if valid
+        DEO_LOG_DEBUG(NETWORKING, "Processing received block - would validate and add to chain");
+        
+        // Mark peer activity and good behavior
+        if (peer_manager_) {
+            peer_manager_->updatePeerActivity(peer_address, peer_port);
+            peer_manager_->reportGoodBehavior(peer_address, peer_port, 5); // Higher score for providing blocks
+        }
+        
+        // Call block handler if set
+        // Note: Would need to extract actual block object from message
+        // if (block_handler_) {
+        //     block_handler_(extracted_block);
+        // }
+    }
 }
 
 void NetworkManager::handleTxMessage(const std::string& peer_address, uint16_t peer_port,
-                                    std::shared_ptr<TxMessage> /* message */) {
-    // TODO: Implement proper TX message handling
-    // The NetworkMessage classes are missing many required methods
+                                    std::shared_ptr<TxMessage> message) {
+    if (!message) {
+        DEO_LOG_ERROR(NETWORKING, "Null TX message from " + peer_address + ":" + std::to_string(peer_port));
+        return;
+    }
+    
     DEO_LOG_DEBUG(NETWORKING, "Received TX message from " + peer_address + ":" + std::to_string(peer_port));
+    
+    // Extract transaction from message
+    // TxMessage should have getTransaction() method
+    if (blockchain_) {
+        // In full implementation, we would:
+        // 1. Extract transaction from TxMessage
+        // 2. Validate transaction
+        // 3. Add to mempool if valid
+        DEO_LOG_DEBUG(NETWORKING, "Processing received transaction - would validate and add to mempool");
+        
+        // Mark peer activity and good behavior
+        if (peer_manager_) {
+            peer_manager_->updatePeerActivity(peer_address, peer_port);
+            peer_manager_->reportGoodBehavior(peer_address, peer_port, 2); // Score for providing transactions
+        }
+        
+        // Call transaction handler if set
+        // Note: Would need to extract actual transaction object from message
+        // if (transaction_handler_) {
+        //     transaction_handler_(extracted_transaction);
+        // }
+    }
 }
 
 void NetworkManager::handlePingMessage(const std::string& peer_address, uint16_t peer_port,
-                                      std::shared_ptr<PingMessage> /* message */) {
-    // TODO: Implement proper PING message handling
-    // The NetworkMessage classes are missing many required methods
+                                      std::shared_ptr<PingMessage> message) {
+    if (!message) {
+        DEO_LOG_ERROR(NETWORKING, "Null PING message from " + peer_address + ":" + std::to_string(peer_port));
+        return;
+    }
+    
     DEO_LOG_DEBUG(NETWORKING, "Received PING message from " + peer_address + ":" + std::to_string(peer_port));
+    
+    // Respond with PONG message
+    PongMessage pong_msg;
+    
+    if (tcp_network_manager_) {
+        try {
+            tcp_network_manager_->sendToPeer(peer_address, pong_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent PONG response to " + peer_address + ":" + std::to_string(peer_port));
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send PONG: " + std::string(e.what()));
+        }
+    }
+    
+    // Update peer activity
+    if (peer_manager_) {
+        peer_manager_->updatePeerActivity(peer_address, peer_port);
+    }
 }
 
 void NetworkManager::handlePongMessage(const std::string& peer_address, uint16_t peer_port,
-                                      std::shared_ptr<PongMessage> /* message */) {
-    // TODO: Implement proper PONG message handling
-    // The NetworkMessage classes are missing many required methods
+                                      std::shared_ptr<PongMessage> message) {
+    if (!message) {
+        DEO_LOG_ERROR(NETWORKING, "Null PONG message from " + peer_address + ":" + std::to_string(peer_port));
+        return;
+    }
+    
     DEO_LOG_DEBUG(NETWORKING, "Received PONG message from " + peer_address + ":" + std::to_string(peer_port));
+    
+    // PONG is a response to PING - update peer activity and latency
+    if (peer_manager_) {
+        peer_manager_->updatePeerActivity(peer_address, peer_port);
+        peer_manager_->reportGoodBehavior(peer_address, peer_port, 1);
+    }
+    
+    // Update connection quality metrics (would calculate latency here)
+    DEO_LOG_DEBUG(NETWORKING, "PONG received, peer is alive: " + peer_address + ":" + std::to_string(peer_port));
 }
 
 bool NetworkManager::sendHelloMessage(const std::string& address, uint16_t port) {
@@ -683,13 +884,17 @@ bool NetworkManager::sendHelloMessage(const std::string& address, uint16_t port)
     HelloMessage hello_msg("node_" + std::to_string(dis(gen)), 1, capabilities);
     auto message_data = hello_msg.serialize();
     
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would send HELLO message to peer " + address + ":" + std::to_string(port));
-        return true; // Placeholder - assume success for connected peers
+    // Send HELLO message via TCP network manager
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            tcp_network_manager_->sendToPeer(address, hello_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent HELLO message to peer " + address + ":" + std::to_string(port));
+            return true;
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send HELLO message to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            return false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
         return false;
@@ -705,13 +910,17 @@ bool NetworkManager::sendPingMessage(const std::string& address, uint16_t port) 
     PingMessage ping_msg(dis(gen));
     auto message_data = ping_msg.serialize();
     
-    // For now, we'll use the peer manager to check if peer is connected
-    // In a full implementation, we would need a TcpNetworkManager or similar
-    if (peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
-        // TODO: Implement actual message sending through TCP connection
-        // This would require integrating with TcpNetworkManager or similar
-        DEO_LOG_DEBUG(NETWORKING, "Would send PING message to peer " + address + ":" + std::to_string(port));
-        return true; // Placeholder - assume success for connected peers
+    // Send PING message via TCP network manager
+    if (tcp_network_manager_ && peer_manager_ && peer_manager_->isPeerConnected(address, port)) {
+        try {
+            tcp_network_manager_->sendToPeer(address, ping_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent PING message to peer " + address + ":" + std::to_string(port));
+            return true;
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Failed to send PING message to peer " + address + ":" + 
+                         std::to_string(port) + ": " + std::string(e.what()));
+            return false;
+        }
     } else {
         DEO_LOG_WARNING(NETWORKING, "Peer " + address + ":" + std::to_string(port) + " is not connected");
         return false;

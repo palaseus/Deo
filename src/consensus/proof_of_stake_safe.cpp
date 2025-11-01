@@ -121,9 +121,58 @@ bool ProofOfStake::validateBlock(const std::shared_ptr<core::Block>& block) {
             return false;
         }
         
-        // TODO: Add more sophisticated validation
-        // For now, accept all valid blocks
-        DEO_LOG_INFO(CONSENSUS, "Block validation passed");
+        // Verify block cryptographic integrity
+        if (!block->verify()) {
+            DEO_LOG_ERROR(CONSENSUS, "Block validation failed: cryptographic verification failed");
+            return false;
+        }
+        
+        // Validate block height progression
+        if (block->getHeight() <= epoch_start_height_) {
+            DEO_LOG_ERROR(CONSENSUS, "Block validation failed: height not progressing");
+            return false;
+        }
+        
+        // Validate block timestamp (should be reasonable, not too far in future)
+        uint64_t block_timestamp = block->getTimestamp();
+        uint64_t current_time = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        
+        // Allow up to 15 minutes in the future (clock skew tolerance)
+        const uint64_t MAX_FUTURE_TIME = 900; // 15 minutes
+        if (block_timestamp > current_time + MAX_FUTURE_TIME) {
+            DEO_LOG_ERROR(CONSENSUS, "Block validation failed: timestamp too far in future");
+            return false;
+        }
+        
+        // Validate all transactions in the block
+        for (const auto& tx : block->getTransactions()) {
+            if (!tx) {
+                DEO_LOG_ERROR(CONSENSUS, "Block validation failed: null transaction");
+                return false;
+            }
+            
+            // Basic transaction validation
+            if (!tx->verify()) {
+                DEO_LOG_ERROR(CONSENSUS, "Block validation failed: transaction verification failed");
+                return false;
+            }
+            
+            // Check transaction inputs and outputs are non-empty
+            if (tx->getInputs().empty() && tx->getOutputs().empty()) {
+                DEO_LOG_ERROR(CONSENSUS, "Block validation failed: empty transaction");
+                return false;
+            }
+        }
+        
+        // Validate block hash matches calculated hash
+        std::string calculated_hash = block->calculateHash();
+        if (calculated_hash != block->getHash()) {
+            DEO_LOG_ERROR(CONSENSUS, "Block validation failed: hash mismatch");
+            return false;
+        }
+        
+        DEO_LOG_INFO(CONSENSUS, "Block validation passed with comprehensive checks");
         return true;
         
     } catch (const std::exception& e) {

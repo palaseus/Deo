@@ -343,36 +343,36 @@ public:
         __FUNCTION__)
 
 #define DEO_LOG_DEBUG(category, message) \
-    deo::utils::Logger::log( \
-        deo::utils::LogLevel::DEBUG, \
-        deo::utils::LogCategory::category, \
+    ::deo::utils::Logger::log( \
+        ::deo::utils::LogLevel::DEBUG, \
+        ::deo::utils::LogCategory::category, \
         message, \
         __FILE__, \
         __LINE__, \
         __FUNCTION__)
 
 #define DEO_LOG_INFO(category, message) \
-    deo::utils::Logger::log( \
-        deo::utils::LogLevel::INFO, \
-        deo::utils::LogCategory::category, \
+    ::deo::utils::Logger::log( \
+        ::deo::utils::LogLevel::INFO, \
+        ::deo::utils::LogCategory::category, \
         message, \
         __FILE__, \
         __LINE__, \
         __FUNCTION__)
 
 #define DEO_LOG_WARNING(category, message) \
-    deo::utils::Logger::log( \
-        deo::utils::LogLevel::WARNING, \
-        deo::utils::LogCategory::category, \
+    ::deo::utils::Logger::log( \
+        ::deo::utils::LogLevel::WARNING, \
+        ::deo::utils::LogCategory::category, \
         message, \
         __FILE__, \
         __LINE__, \
         __FUNCTION__)
 
 #define DEO_LOG_ERROR(category, message) \
-    deo::utils::Logger::log( \
-        deo::utils::LogLevel::ERROR, \
-        deo::utils::LogCategory::category, \
+    ::deo::utils::Logger::log( \
+        ::deo::utils::LogLevel::ERROR, \
+        ::deo::utils::LogCategory::category, \
         message, \
         __FILE__, \
         __LINE__, \
