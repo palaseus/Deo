@@ -3,6 +3,45 @@
  * @brief Advanced consensus mechanisms and optimizations for the Deo Blockchain
  * @author Deo Blockchain Team
  * @version 1.0.0
+ * 
+ * @warning NOTE: This header file contains interface definitions only.
+ * 
+ * STATUS: FUTURE WORK - NOT IMPLEMENTED
+ * =====================================
+ * The following classes are defined as interfaces but have NO implementation:
+ * - HybridConsensus
+ * - DelegatedProofOfStake (DPoS)
+ * - PracticalByzantineFaultTolerance (PBFT)
+ * - ConsensusManager
+ * - ConsensusOptimizer
+ * 
+ * These classes exist only as interface definitions for future development.
+ * Attempting to instantiate or use these classes will result in linker errors.
+ * 
+ * IMPLEMENTATION STATUS:
+ * ======================
+ * ✅ Implemented and Available:
+ * - ProofOfWork (src/consensus/proof_of_work.cpp)
+ * - ProofOfStake (src/consensus/proof_of_stake.cpp)
+ * - ProofOfAuthority (src/consensus/proof_of_authority.cpp)
+ * 
+ * ❌ Future Work (Interface Only):
+ * - HybridConsensus - No implementation file exists
+ * - DelegatedProofOfStake - No implementation file exists
+ * - PracticalByzantineFaultTolerance - No implementation file exists
+ * - ConsensusManager - No implementation file exists
+ * - ConsensusOptimizer - No implementation file exists
+ * 
+ * FUTURE DEVELOPMENT:
+ * ===================
+ * These mechanisms are planned for future implementation. Priority:
+ * 1. DPoS (Delegated Proof of Stake) - Medium priority
+ * 2. Hybrid Consensus - Low priority
+ * 3. PBFT - Low priority
+ * 4. ConsensusManager - Low priority
+ * 5. ConsensusOptimizer - Low priority
+ * 
+ * See docs/ADVANCED_CONSENSUS.md and docs/ADVANCED_CONSENSUS_STATUS.md for details.
  */
 
 #ifndef DEO_ADVANCED_CONSENSUS_H
@@ -25,6 +64,9 @@ namespace deo::consensus {
 
 /**
  * @brief Hybrid consensus combining multiple mechanisms
+ * 
+ * @warning FUTURE WORK - This class is not implemented.
+ * Only interface definition exists. Use PoW, PoS, or PoA instead.
  */
 class HybridConsensus : public ConsensusEngine {
 public:
@@ -69,6 +111,9 @@ private:
 
 /**
  * @brief Delegated Proof of Stake (DPoS) consensus
+ * 
+ * @warning FUTURE WORK - This class is not implemented.
+ * Only interface definition exists. Use PoW, PoS, or PoA instead.
  */
 class DelegatedProofOfStake : public ConsensusEngine {
 public:
@@ -125,6 +170,9 @@ private:
 
 /**
  * @brief Practical Byzantine Fault Tolerance (PBFT) consensus
+ * 
+ * @warning FUTURE WORK - This class is not implemented.
+ * Only interface definition exists. Use PoW, PoS, or PoA instead.
  */
 class PracticalByzantineFaultTolerance : public ConsensusEngine {
 public:
@@ -242,6 +290,9 @@ private:
 
 /**
  * @brief Consensus manager for managing multiple consensus mechanisms
+ * 
+ * @warning FUTURE WORK - This class is not implemented.
+ * Only interface definition exists.
  */
 class ConsensusManager {
 public:
@@ -278,6 +329,9 @@ private:
 
 /**
  * @brief Consensus optimizer for performance optimization
+ * 
+ * @warning FUTURE WORK - This class is not implemented.
+ * Only interface definition exists.
  */
 class ConsensusOptimizer {
 public:

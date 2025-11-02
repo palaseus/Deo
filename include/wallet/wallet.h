@@ -217,6 +217,12 @@ public:
      * @return JSON with wallet statistics
      */
     nlohmann::json getStatistics() const;
+    
+    /**
+     * @brief Get wallet configuration
+     * @return Wallet configuration
+     */
+    WalletConfig getConfig() const;
 
 private:
     WalletConfig config_;                                    ///< Wallet configuration

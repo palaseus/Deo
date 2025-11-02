@@ -567,6 +567,11 @@ nlohmann::json Wallet::getStatistics() const {
     return stats;
 }
 
+WalletConfig Wallet::getConfig() const {
+    std::lock_guard<std::mutex> lock(wallet_mutex_);
+    return config_;
+}
+
 std::shared_ptr<crypto::KeyPair> Wallet::getKeyPair(const std::string& address, 
                                                     const std::string& password) const {
     (void)password; // TODO: Use password for encrypted key decryption

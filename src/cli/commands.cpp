@@ -27,7 +27,8 @@
 #include "utils/logger.h"
 #include "utils/error_handler.h"
 #include "utils/config.h"
-
+#include <nlohmann/json.hpp>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -54,6 +55,25 @@ static SmartContractManager& getGlobalContractManager() {
     return instance;
 }
 
+// Helper function to prompt for wallet password
+static std::string promptForPassword(bool confirm = false) {
+    std::string password;
+    std::cout << "Enter wallet password: ";
+    std::getline(std::cin, password);
+    
+    if (confirm) {
+        std::string confirm_password;
+        std::cout << "Confirm password: ";
+        std::getline(std::cin, confirm_password);
+        if (password != confirm_password) {
+            std::cout << "❌ Passwords do not match!" << std::endl;
+            return "";
+        }
+    }
+    
+    return password;
+}
+
 namespace deo {
 namespace cli {
 
@@ -64,17 +84,39 @@ Commands::Commands() {
 bool Commands::initialize() {
     DEO_LOG_INFO(CLI, "Commands initialized");
     
-    // Initialize wallet
+    // Initialize wallet - load config
     wallet::WalletConfig wallet_config;
     wallet_config.data_directory = "./wallet";
-    wallet_config.encrypt_wallet = false; // TODO: Load from config
+    wallet_config.encrypt_wallet = false; // Default
+    
+    // Load wallet encryption setting from config.json
+    std::ifstream config_file("config.json");
+    if (config_file.is_open()) {
+        try {
+            nlohmann::json config_json;
+            config_file >> config_json;
+            if (config_json.contains("wallet")) {
+                const auto& wallet = config_json["wallet"];
+                if (wallet.contains("encrypt_wallet")) {
+                    wallet_config.encrypt_wallet = wallet["encrypt_wallet"].get<bool>();
+                }
+                if (wallet.contains("data_directory")) {
+                    wallet_config.data_directory = wallet["data_directory"].get<std::string>();
+                }
+            }
+        } catch (const std::exception& e) {
+            DEO_LOG_WARNING(CLI, "Failed to read wallet config: " + std::string(e.what()) + ", using defaults");
+        }
+        config_file.close();
+    }
+    
     wallet_ = std::make_unique<wallet::Wallet>(wallet_config);
     if (!wallet_->initialize()) {
         DEO_LOG_ERROR(CLI, "Failed to initialize wallet");
         return false;
     }
     
-    // Try to load existing wallet
+    // Try to load existing wallet (with empty password for now - user will be prompted if encrypted)
     wallet_->load("");
     
     // Initialize contract CLI when blockchain is available
@@ -790,10 +832,24 @@ int Commands::connectPeer(const CommandResult& result) {
         
         std::cout << "Connecting to peer: " << ip << ":" << port << std::endl;
         
-        // For this demo, we'll just show the connection attempt
-        // In a real implementation, you'd use the network manager
-        std::cout << "Connection attempt to " << ip << ":" << port << " initiated" << std::endl;
-        std::cout << "Note: This is a demonstration. Full P2P connection requires running node." << std::endl;
+        // Connect to peer using NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            auto p2p_network = node_runtime_->getP2PNetworkManager();
+            if (p2p_network && p2p_network->isRunning()) {
+                if (p2p_network->connectToPeer(ip, port)) {
+                    std::cout << "✅ Successfully connected to peer " << ip << ":" << port << std::endl;
+                } else {
+                    std::cout << "❌ Failed to connect to peer " << ip << ":" << port << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cout << "❌ P2P network is not running. Start node with P2P enabled." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "❌ Node is not running. Please start node first with 'start-node' command." << std::endl;
+            return 1;
+        }
     
     return 0;
         
@@ -807,14 +863,27 @@ int Commands::showPeers(const CommandResult& /* result */) {
     try {
         std::cout << "=== Connected Peers ===" << std::endl;
         
-        // For this demo, we'll show mock peer information
-        // In a real implementation, you'd query the network manager
-        std::cout << "Peer 1: 192.168.1.100:8333 (Connected, Height: 100)" << std::endl;
-        std::cout << "Peer 2: 10.0.0.50:8333 (Connected, Height: 99)" << std::endl;
-        std::cout << "Peer 3: 172.16.0.25:8333 (Connected, Height: 101)" << std::endl;
-        
-        std::cout << "\nTotal connected peers: 3" << std::endl;
-        std::cout << "Note: This is demonstration data. Real peer list requires running node." << std::endl;
+        // Get peer list from NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            auto p2p_network = node_runtime_->getP2PNetworkManager();
+            if (p2p_network && p2p_network->isRunning()) {
+                auto peers = p2p_network->getConnectedPeers();
+                if (peers.empty()) {
+                    std::cout << "No connected peers" << std::endl;
+                } else {
+                    for (size_t i = 0; i < peers.size(); ++i) {
+                        std::cout << "Peer " << (i + 1) << ": " << peers[i] << " (Connected)" << std::endl;
+                    }
+                    std::cout << "\nTotal connected peers: " << peers.size() << std::endl;
+                }
+            } else {
+                std::cout << "P2P network is not running. Start node with P2P enabled." << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "Node is not running. Please start node first with 'start-node' command." << std::endl;
+            return 1;
+        }
         
     return 0;
         
@@ -887,8 +956,7 @@ int Commands::testNetworking(const CommandResult& /* result */) {
         std::cout << "   Message serialization framework ready" << std::endl;
         
         std::cout << "\n✅ P2P Networking framework test completed successfully!" << std::endl;
-        std::cout << "   Note: Full networking implementation temporarily disabled" << std::endl;
-        std::cout << "   Core consensus synchronization is available" << std::endl;
+        std::cout << "   P2P networking is fully operational when node is running" << std::endl;
         return 0;
         
     } catch (const std::exception& e) {
@@ -1204,6 +1272,9 @@ int Commands::startNode(const CommandResult& result) {
         if (result.args.find("--p2p-port") != result.args.end()) {
             config.p2p_port = static_cast<uint16_t>(std::stoi(result.args.at("--p2p-port")));
         }
+        if (result.args.find("--enable-p2p") != result.args.end()) {
+            config.enable_p2p = true;
+        }
         if (result.args.find("--mine") != result.args.end()) {
             config.enable_mining = true;
         }
@@ -1217,6 +1288,7 @@ int Commands::startNode(const CommandResult& result) {
         std::cout << "Configuration:" << std::endl;
         std::cout << "  Data directory: " << config.data_directory << std::endl;
         std::cout << "  State directory: " << config.state_directory << std::endl;
+        std::cout << "  P2P enabled: " << (config.enable_p2p ? "Yes" : "No") << std::endl;
         std::cout << "  P2P port: " << config.p2p_port << std::endl;
         std::cout << "  Mining enabled: " << (config.enable_mining ? "Yes" : "No") << std::endl;
         std::cout << "  Mining difficulty: " << config.mining_difficulty << std::endl;
@@ -1521,14 +1593,30 @@ int Commands::addTransaction(const CommandResult& result) {
         auto blockchain_state = node_runtime_->getBlockchainState();
         // Get mempool information
         
-        std::cout << "Transaction created successfully!" << std::endl;
-        std::cout << "Transaction ID: " << transaction->getId() << std::endl;
-        std::cout << "From: " << from << std::endl;
-        std::cout << "To: " << to << std::endl;
-        std::cout << "Amount: " << amount << std::endl;
-        std::cout << "Gas: " << gas_limit << std::endl;
-        std::cout << "Gas Price: " << gas_price << std::endl;
-        std::cout << "Note: Transaction would be added to mempool when node is running." << std::endl;
+        // Add transaction to NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            if (node_runtime_->addTransaction(transaction)) {
+                std::cout << "Transaction created and added to mempool successfully!" << std::endl;
+                std::cout << "Transaction ID: " << transaction->getId() << std::endl;
+                std::cout << "From: " << from << std::endl;
+                std::cout << "To: " << to << std::endl;
+                std::cout << "Amount: " << amount << std::endl;
+                std::cout << "Gas: " << gas_limit << std::endl;
+                std::cout << "Gas Price: " << gas_price << std::endl;
+            } else {
+                std::cout << "Failed to add transaction to mempool" << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "Transaction created successfully!" << std::endl;
+            std::cout << "Transaction ID: " << transaction->getId() << std::endl;
+            std::cout << "From: " << from << std::endl;
+            std::cout << "To: " << to << std::endl;
+            std::cout << "Amount: " << amount << std::endl;
+            std::cout << "Gas: " << gas_limit << std::endl;
+            std::cout << "Gas Price: " << gas_price << std::endl;
+            std::cout << "Note: Transaction will be added to mempool when node is running." << std::endl;
+        }
         
     } catch (const std::exception& e) {
         std::cout << "Error adding transaction: " << e.what() << std::endl;
@@ -1675,8 +1763,20 @@ int Commands::broadcastTransaction(const CommandResult& result) {
         // 3. Send to all connected peers
         // 4. Track propagation status
         
-        std::cout << "✅ Transaction broadcast initiated successfully!" << std::endl;
-        std::cout << "   Note: Full P2P networking implementation in progress" << std::endl;
+        // Broadcast transaction using NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            auto tx = node_runtime_->getTransaction(tx_hash);
+            if (tx) {
+                node_runtime_->broadcastTransaction(tx);
+                std::cout << "✅ Transaction broadcast initiated successfully!" << std::endl;
+            } else {
+                std::cout << "❌ Transaction not found: " << tx_hash << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "❌ Node is not running. Please start node first." << std::endl;
+            return 1;
+        }
         return 0;
         
     } catch (const std::exception& e) {
@@ -1698,28 +1798,20 @@ int Commands::broadcastBlock(const CommandResult& result) {
         std::string block_hash = it->second;
         std::cout << "Broadcasting block: " << block_hash << std::endl;
         
-        // Get block from blockchain
-        if (!blockchain_) {
-            std::cout << "❌ Blockchain not initialized" << std::endl;
+        // Broadcast block using NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            auto block = node_runtime_->getBlock(block_hash);
+            if (block) {
+                node_runtime_->broadcastBlock(block);
+                std::cout << "✅ Block broadcast initiated successfully!" << std::endl;
+            } else {
+                std::cout << "❌ Block not found: " << block_hash << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "❌ Node is not running. Please start node first." << std::endl;
             return 1;
         }
-        
-        auto block = blockchain_->getBlock(block_hash);
-        if (!block) {
-            std::cout << "❌ Block not found: " << block_hash << std::endl;
-            return 1;
-        }
-        
-        // Create BLOCK message
-        auto block_message = std::make_shared<network::BlockMessage>();
-        block_message->block_ = block;
-        
-        // Send to all connected peers through network manager
-        DEO_LOG_DEBUG(CLI, "Block broadcast prepared for: " + block_hash);
-        std::cout << "✅ Block broadcast prepared for: " << block_hash << std::endl;
-        
-        std::cout << "✅ Block broadcast initiated successfully!" << std::endl;
-        std::cout << "   Note: Full P2P networking implementation in progress" << std::endl;
         return 0;
         
     } catch (const std::exception& e) {
@@ -1734,21 +1826,25 @@ int Commands::syncChain(const CommandResult& /* result */) {
     try {
         std::cout << "Starting blockchain synchronization..." << std::endl;
         
-        // Get current chain height
-        if (!blockchain_) {
-            std::cout << "❌ Blockchain not initialized" << std::endl;
+        // Start chain synchronization using NodeRuntime if available
+        if (node_runtime_ && node_runtime_->isRunning()) {
+            auto blockchain_state = node_runtime_->getBlockchainState();
+            uint64_t current_height = blockchain_state.height;
+            std::cout << "Current chain height: " << current_height << std::endl;
+            
+            if (node_runtime_->startSync()) {
+                std::cout << "✅ Chain synchronization started successfully!" << std::endl;
+                std::cout << "   Sync status: " << static_cast<int>(node_runtime_->getSyncStatus()) << std::endl;
+                std::cout << "   Progress: " << (node_runtime_->getSyncProgress() * 100.0) << "%" << std::endl;
+            } else {
+                std::cout << "❌ Failed to start chain synchronization" << std::endl;
+                std::cout << "   Note: Sync requires LevelDB storage backend and P2P network" << std::endl;
+                return 1;
+            }
+        } else {
+            std::cout << "❌ Node is not running. Please start node first." << std::endl;
             return 1;
         }
-        
-        uint64_t current_height = blockchain_->getHeight();
-        std::cout << "Current chain height: " << current_height << std::endl;
-        
-        // Request blocks from peers through network manager
-        DEO_LOG_DEBUG(CLI, "Chain synchronization prepared for height: " + std::to_string(current_height));
-        std::cout << "✅ Chain synchronization prepared for height: " << current_height << std::endl;
-        
-        std::cout << "✅ Chain synchronization initiated successfully!" << std::endl;
-        std::cout << "   Note: Full P2P networking implementation in progress" << std::endl;
         return 0;
         
     } catch (const std::exception& e) {
@@ -2448,8 +2544,16 @@ int Commands::walletCreateAccount(const CommandResult& result) {
         std::cout << "   Address: " << address << std::endl;
         std::cout << "   Label: " << (label.empty() ? "(no label)" : label) << std::endl;
         
-        // Save wallet
-        wallet_->save("");
+        // Save wallet (prompt for password if encryption is enabled)
+        std::string password = "";
+        if (wallet_ && wallet_->getConfig().encrypt_wallet) {
+            password = promptForPassword(true);
+            if (password.empty()) {
+                std::cout << "⚠️  Warning: Wallet not saved (password entry cancelled or passwords didn't match)" << std::endl;
+                return 1;
+            }
+        }
+        wallet_->save(password);
         
         return 0;
         
@@ -2496,8 +2600,16 @@ int Commands::walletImportAccount(const CommandResult& result) {
         std::cout << "   Address: " << address << std::endl;
         std::cout << "   Label: " << (label.empty() ? "(no label)" : label) << std::endl;
         
-        // Save wallet
-        wallet_->save("");
+        // Save wallet (prompt for password if encryption is enabled)
+        std::string save_password = "";
+        if (wallet_ && wallet_->getConfig().encrypt_wallet) {
+            save_password = promptForPassword(true);
+            if (save_password.empty()) {
+                std::cout << "⚠️  Warning: Wallet not saved (password entry cancelled or passwords didn't match)" << std::endl;
+                return 1;
+            }
+        }
+        wallet_->save(save_password);
         
         return 0;
         
@@ -2630,8 +2742,21 @@ int Commands::walletRemoveAccount(const CommandResult& result) {
         
         std::cout << "✅ Account removed: " << address << std::endl;
         
-        // Save wallet
-        wallet_->save("");
+        // Save wallet (prompt for password if encryption is enabled)
+        std::string save_password = "";
+        if (wallet_ && wallet_->getConfig().encrypt_wallet) {
+            // Reuse password if already provided, otherwise prompt
+            if (password.empty()) {
+                save_password = promptForPassword();
+                if (save_password.empty()) {
+                    std::cout << "⚠️  Warning: Wallet not saved (password entry cancelled)" << std::endl;
+                    return 1;
+                }
+            } else {
+                save_password = password;
+            }
+        }
+        wallet_->save(save_password);
         
         return 0;
         

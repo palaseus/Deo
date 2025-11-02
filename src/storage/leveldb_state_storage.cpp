@@ -780,5 +780,105 @@ void LevelDBStateStorage::updateStorageEntryCount(int64_t delta) {
     }
 }
 
+uint64_t LevelDBStateStorage::pruneState(uint64_t keep_blocks, uint64_t /* current_height */, 
+                                         const std::set<std::string>& recent_accounts) {
+    if (!db_ || keep_blocks == 0) {
+        // Don't prune if keep_blocks is 0 (keep all state)
+        return 0;
+    }
+    
+    uint64_t accounts_pruned = 0;
+    
+    try {
+        // Get all account addresses without holding the lock for the entire pruning operation
+        std::vector<std::string> account_addresses;
+        {
+            std::lock_guard<std::mutex> lock(storage_mutex_);
+            if (db_) {
+                try {
+                    std::unique_ptr<leveldb::Iterator> it(db_->NewIterator(read_options_));
+                    for (it->Seek(ACCOUNT_PREFIX); it->Valid() && it->key().starts_with(ACCOUNT_PREFIX); it->Next()) {
+                        std::string key = it->key().ToString();
+                        std::string address = key.substr(strlen(ACCOUNT_PREFIX));
+                        account_addresses.push_back(address);
+                    }
+                } catch (const std::exception& e) {
+                    DEO_LOG_ERROR(BLOCKCHAIN, "Exception while getting account addresses for pruning: " + std::string(e.what()));
+                    return 0;
+                }
+            }
+        }
+        
+        leveldb::WriteBatch batch;
+        
+        // Process accounts and build batch (this can call getAccount which uses its own lock)
+        for (const auto& address : account_addresses) {
+            auto account = getAccount(address);
+            if (!account) {
+                continue;
+            }
+            
+            // Check if this account is in the recent blocks (must keep)
+            if (recent_accounts.find(address) != recent_accounts.end()) {
+                DEO_LOG_DEBUG(BLOCKCHAIN, "Keeping account (in recent blocks): " + address);
+                continue;
+            }
+            
+            // Only prune accounts that are safe to remove:
+            // 1. Not referenced in recent blocks (already checked above)
+            // 2. Have zero balance
+            // 3. Are not contracts (no code_hash or empty code_hash)
+            // 4. Have no contract storage
+            // 5. Have zero nonce (no recent activity)
+            
+            bool is_contract = !account->code_hash.empty();
+            bool has_storage = !account->storage.empty();
+            bool has_balance = account->balance > 0;
+            bool has_nonce = account->nonce > 0;
+            
+            // Prune if account is truly empty and not in recent blocks
+            bool can_prune = !has_balance && !is_contract && !has_storage && !has_nonce;
+            
+            if (can_prune) {
+                // Safe to prune this account
+                std::string account_key = createAccountKey(address);
+                batch.Delete(account_key);
+                updateAccountCount(-1);
+                accounts_pruned++;
+                
+                DEO_LOG_DEBUG(BLOCKCHAIN, "Pruning account: " + address + 
+                             " (empty, not in recent " + std::to_string(keep_blocks) + " blocks)");
+            } else {
+                DEO_LOG_DEBUG(BLOCKCHAIN, "Preserving account: " + address + 
+                             " (balance=" + std::to_string(account->balance) +
+                             ", contract=" + std::string(is_contract ? "yes" : "no") +
+                             ", storage=" + std::to_string(account->storage.size()) +
+                             ", nonce=" + std::to_string(account->nonce) + ")");
+            }
+        }
+        
+        // Apply batch deletion
+        if (accounts_pruned > 0) {
+            leveldb::Status status = db_->Write(write_options_, &batch);
+            if (status.ok()) {
+                DEO_LOG_INFO(BLOCKCHAIN, "Pruned " + std::to_string(accounts_pruned) + 
+                            " accounts (preserving state for " + std::to_string(keep_blocks) + 
+                            " blocks, " + std::to_string(recent_accounts.size()) + " recent accounts kept)");
+            } else {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Failed to prune state: " + status.ToString());
+                accounts_pruned = 0;
+            }
+        } else {
+            DEO_LOG_DEBUG(BLOCKCHAIN, "No accounts pruned (all accounts preserved or not empty)");
+        }
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(BLOCKCHAIN, "Exception while pruning state: " + std::string(e.what()));
+        accounts_pruned = 0;
+    }
+    
+    return accounts_pruned;
+}
+
 } // namespace storage
 } // namespace deo

@@ -28,7 +28,7 @@ protected:
         config_.enable_p2p = false; // Disable P2P for simpler benchmarking
         config_.enable_mining = false;
         config_.enable_json_rpc = false;
-        config_.storage_backend = "json"; // Use JSON for faster setup
+        config_.storage_backend = storage_backend_; // Use configured backend
         
         node_runtime_ = std::make_unique<node::NodeRuntime>(config_);
         ASSERT_TRUE(node_runtime_->initialize());
@@ -61,6 +61,14 @@ protected:
     node::NodeConfig config_;
     std::unique_ptr<node::NodeRuntime> node_runtime_;
     std::string test_dir_;
+    std::string storage_backend_ = "json"; // Default, can be overridden in test
+    
+    // Helper to run test with different backends
+    void runWithBackend(const std::string& backend) {
+        storage_backend_ = backend;
+        TearDown();
+        SetUp();
+    }
 };
 
 TEST_F(TransactionThroughputBenchmark, SingleTransactionProcessing) {
@@ -180,6 +188,50 @@ TEST_F(TransactionThroughputBenchmark, MempoolCapacity) {
     
     EXPECT_GT(added_count, 0);
     EXPECT_EQ(node_runtime_->getMempoolSize(), added_count);
+}
+
+// Backend comparison test
+TEST_F(TransactionThroughputBenchmark, BackendComparison) {
+    std::cout << "\n=== Backend Performance Comparison ===" << std::endl;
+    
+    const size_t transaction_count = 100;
+    std::vector<std::shared_ptr<core::Transaction>> transactions;
+    
+    for (size_t i = 0; i < transaction_count; ++i) {
+        transactions.push_back(createTestTransaction(i));
+    }
+    
+    // Test JSON backend
+    runWithBackend("json");
+    auto json_start = std::chrono::high_resolution_clock::now();
+    for (auto& tx : transactions) {
+        node_runtime_->addTransaction(tx);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto json_end = std::chrono::high_resolution_clock::now();
+    auto json_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        json_end - json_start).count();
+    double json_tps = (transaction_count * 1000.0) / json_duration;
+    
+    // Test LevelDB backend
+    runWithBackend("leveldb");
+    auto leveldb_start = std::chrono::high_resolution_clock::now();
+    for (auto& tx : transactions) {
+        node_runtime_->addTransaction(tx);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    auto leveldb_end = std::chrono::high_resolution_clock::now();
+    auto leveldb_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        leveldb_end - leveldb_start).count();
+    double leveldb_tps = (transaction_count * 1000.0) / leveldb_duration;
+    
+    std::cout << "JSON Backend:" << std::endl;
+    std::cout << "  Duration: " << json_duration << " ms" << std::endl;
+    std::cout << "  Throughput: " << json_tps << " TPS" << std::endl;
+    std::cout << "\nLevelDB Backend:" << std::endl;
+    std::cout << "  Duration: " << leveldb_duration << " ms" << std::endl;
+    std::cout << "  Throughput: " << leveldb_tps << " TPS" << std::endl;
+    std::cout << "\nPerformance ratio: " << (leveldb_tps / json_tps) << "x" << std::endl;
 }
 
 } // namespace tests

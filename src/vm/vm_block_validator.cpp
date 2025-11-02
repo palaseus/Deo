@@ -37,9 +37,10 @@ VMBlockValidator::~VMBlockValidator() {
 
 bool VMBlockValidator::initialize() {
     try {
-        // Initialize state store
-        if (!state_store_->initialize()) {
-            DEO_LOG_ERROR(VIRTUAL_MACHINE, "Failed to initialize state store");
+        // State store should already be initialized by NodeRuntime before creating VMBlockValidator
+        // Don't call initialize() again as it's already initialized
+        if (!state_store_) {
+            DEO_LOG_ERROR(VIRTUAL_MACHINE, "State store is null");
             return false;
         }
         

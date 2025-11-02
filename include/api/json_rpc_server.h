@@ -185,6 +185,18 @@ public:
      * @return Statistics as JSON
      */
     nlohmann::json getStatistics() const;
+    
+    /**
+     * @brief Get health check response
+     * @return Health status as JSON string
+     */
+    std::string getHealthCheck() const;
+    
+    /**
+     * @brief Get Prometheus metrics format
+     * @return Metrics in Prometheus format
+     */
+    std::string getPrometheusMetrics() const;
 
 private:
     uint16_t port_;                                    ///< Server port
@@ -215,9 +227,12 @@ private:
      * @param request HTTP request string
      * @param headers Output map of headers
      * @param body Output request body
+     * @param method Output HTTP method (GET, POST, etc.)
+     * @param path Output HTTP path
      * @return True if parsing was successful
      */
-    bool parseHttpRequest(const std::string& request, std::map<std::string, std::string>& headers, std::string& body);
+    bool parseHttpRequest(const std::string& request, std::map<std::string, std::string>& headers, 
+                         std::string& body, std::string& method, std::string& path);
     
     /**
      * @brief Create HTTP response

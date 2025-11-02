@@ -66,6 +66,9 @@ public:
     // Peer manager access
     std::shared_ptr<PeerManager> getPeerManager() const;
     
+    // Gossip protocol access
+    std::shared_ptr<GossipProtocol> getGossipProtocol() const;
+    
     // Network statistics
     struct NetworkStats {
         TcpNetworkManager::NetworkStats tcp_stats;
@@ -108,6 +111,8 @@ private:
     void handleHelloMessage(const NetworkMessage& message, const std::string& peer_address);
     void handlePingMessage(const NetworkMessage& message, const std::string& peer_address);
     void handlePongMessage(const NetworkMessage& message, const std::string& peer_address);
+    void handleGetAddrMessage(const NetworkMessage& message, const std::string& peer_address);
+    void handleAddrMessage(const NetworkMessage& message, const std::string& peer_address);
     
     // Block synchronization
     void requestMissingBlocks();

@@ -39,9 +39,13 @@ bool BlockStorage::initialize() {
         }
     }
     
-    // Load existing blocks
-    if (!loadBlocks()) {
-        DEO_WARNING(STORAGE, "Failed to load existing blocks");
+    // Load existing blocks - make this non-blocking and handle failures gracefully
+    try {
+        if (!loadBlocks()) {
+            DEO_LOG_WARNING(STORAGE, "Failed to load existing blocks, starting with empty storage");
+        }
+    } catch (const std::exception& e) {
+        DEO_LOG_WARNING(STORAGE, "Exception while loading blocks: " + std::string(e.what()) + ", continuing with empty storage");
     }
     
     DEO_LOG_INFO(STORAGE, "Block storage initialized successfully");

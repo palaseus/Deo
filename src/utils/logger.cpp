@@ -15,6 +15,7 @@
 #include <chrono>
 #include <thread>
 #include <filesystem>
+#include <atomic>
 
 namespace deo {
 namespace utils {
@@ -23,24 +24,54 @@ std::unique_ptr<Logger> Logger::instance_ = nullptr;
 std::mutex Logger::instance_mutex_;
 
 void Logger::initialize(LogLevel level, const std::string& log_file, bool enable_async) {
+    // Use a recursive lock approach to handle re-entrant calls safely
+    static std::atomic<bool> initializing{false};
+    
+    // Fast path: if already initialized, just return
+    if (instance_) {
+        return;
+    }
+    
+    // Try to set initializing flag
+    bool expected = false;
+    if (!initializing.compare_exchange_strong(expected, true)) {
+        // Another thread is initializing, wait for it
+        while (!instance_) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        return;
+    }
+    
+    // We're the initializing thread - now get the mutex
     std::lock_guard<std::mutex> lock(instance_mutex_);
+    
+    // Double check after acquiring lock
     if (!instance_) {
+        // Create logger instance (constructor doesn't log, so safe)
         instance_ = std::make_unique<Logger>();
         instance_->config_.min_level = level;
         instance_->config_.log_file = log_file;
         instance_->config_.async_enabled = enable_async;
+        instance_->config_.console_enabled = true;
         
         if (!log_file.empty()) {
-            instance_->log_stream_.open(log_file, std::ios::app);
-            instance_->config_.file_enabled = true;
+            try {
+                instance_->log_stream_.open(log_file, std::ios::app);
+                instance_->config_.file_enabled = true;
+            } catch (...) {
+                // If file open fails, just disable file logging
+                instance_->config_.file_enabled = false;
+            }
         }
         
         if (enable_async) {
             instance_->startAsyncWorker();
         }
         
-        DEO_LOG_INFO(GENERAL, "Logging system initialized");
+        // No logging here - avoid any potential circular calls during init
     }
+    
+    initializing = false;
 }
 
 void Logger::shutdown() {
@@ -68,33 +99,41 @@ void Logger::log(LogLevel level,
                 int line,
                 const std::string& function,
                 const std::map<std::string, std::string>& context) {
-    auto& instance = getInstance();
-    
-    if (level < instance.config_.min_level) {
-        return;
+    // Fast path: if instance doesn't exist, try to get it (which will create default)
+    // This handles the case where log is called before explicit initialization
+    try {
+        auto& instance = getInstance();
+        
+        // Check level before doing any work
+        if (level < instance.config_.min_level) {
+            return;
+        }
+        
+        LogEntry entry;
+        entry.level = level;
+        entry.category = category;
+        entry.message = message;
+        entry.file = file;
+        entry.line = line;
+        entry.function = function;
+        entry.timestamp = std::chrono::system_clock::now();
+        entry.thread_id = instance.getThreadId();
+        entry.context = context;
+        
+        if (instance.config_.async_enabled) {
+            std::lock_guard<std::mutex> lock(instance.mutex_);
+            instance.log_queue_.push(entry);
+            instance.log_condition_.notify_one();
+        } else {
+            instance.writeLog(entry);
+        }
+        
+        instance.updateStatistics(entry);
+        instance.addToRecentEntries(entry);
+    } catch (...) {
+        // If logging fails (e.g., during static initialization), just ignore
+        // This prevents hangs during early initialization
     }
-    
-    LogEntry entry;
-    entry.level = level;
-    entry.category = category;
-    entry.message = message;
-    entry.file = file;
-    entry.line = line;
-    entry.function = function;
-    entry.timestamp = std::chrono::system_clock::now();
-    entry.thread_id = instance.getThreadId();
-    entry.context = context;
-    
-    if (instance.config_.async_enabled) {
-        std::lock_guard<std::mutex> lock(instance.mutex_);
-        instance.log_queue_.push(entry);
-        instance.log_condition_.notify_one();
-    } else {
-        instance.writeLog(entry);
-    }
-    
-    instance.updateStatistics(entry);
-    instance.addToRecentEntries(entry);
 }
 
 void Logger::setLevel(LogLevel level) {
@@ -209,10 +248,16 @@ Logger::~Logger() {
 }
 
 Logger& Logger::getInstance() {
+    // Double-checked locking pattern
     if (!instance_) {
         std::lock_guard<std::mutex> lock(instance_mutex_);
         if (!instance_) {
+            // Create default logger if not initialized
             instance_ = std::make_unique<Logger>();
+            instance_->config_.min_level = LogLevel::INFO;
+            instance_->config_.console_enabled = true;
+            instance_->config_.file_enabled = false;
+            instance_->config_.async_enabled = false;
         }
     }
     return *instance_;

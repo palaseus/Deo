@@ -7,6 +7,7 @@
 
 #include "network/network_messages.h"
 #include "utils/logger.h"
+#include <cstring>
 
 namespace deo {
 namespace network {
@@ -30,6 +31,8 @@ std::string MessageFactory::getTypeName(MessageType type) {
         case MessageType::TX: return "TX";
         case MessageType::PING: return "PING";
         case MessageType::PONG: return "PONG";
+        case MessageType::GETADDR: return "GETADDR";
+        case MessageType::ADDR: return "ADDR";
         case MessageType::GETBLOCKS: return "GETBLOCKS";
         case MessageType::GETHEADERS: return "GETHEADERS";
         case MessageType::HEADERS: return "HEADERS";
@@ -429,6 +432,206 @@ bool RejectMessage::fromJson(const nlohmann::json& json) {
 
 bool RejectMessage::validate() const {
     return !reason_.empty() && !data_hash_.empty();
+}
+
+// GetAddrMessage implementation
+GetAddrMessage::GetAddrMessage() : NetworkMessage(MessageType::GETADDR) {
+}
+
+size_t GetAddrMessage::getSize() const {
+    return sizeof(type_) + sizeof(timestamp_);
+}
+
+std::vector<uint8_t> GetAddrMessage::serialize() const {
+    std::vector<uint8_t> data;
+    data.push_back(static_cast<uint8_t>(type_));
+    return data;
+}
+
+bool GetAddrMessage::deserialize(const std::vector<uint8_t>& data) {
+    if (data.empty()) return false;
+    return data[0] == static_cast<uint8_t>(type_);
+}
+
+nlohmann::json GetAddrMessage::toJson() const {
+    nlohmann::json json;
+    json["type"] = static_cast<int>(type_);
+    return json;
+}
+
+bool GetAddrMessage::fromJson(const nlohmann::json& json) {
+    try {
+        // GETADDR is a simple request message with no parameters
+        return json.contains("type") && json.at("type").get<int>() == static_cast<int>(type_);
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to deserialize GetAddrMessage: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool GetAddrMessage::validate() const {
+    return true; // GETADDR is always valid
+}
+
+// AddrMessage implementation
+AddrMessage::AddrMessage() : NetworkMessage(MessageType::ADDR) {
+}
+
+AddrMessage::AddrMessage(const std::vector<PeerAddress>& addresses)
+    : NetworkMessage(MessageType::ADDR), addresses_(addresses) {
+}
+
+size_t AddrMessage::getSize() const {
+    size_t size = sizeof(type_) + sizeof(timestamp_) + sizeof(uint32_t); // count field
+    for (const auto& addr : addresses_) {
+        size += addr.address.size() + sizeof(addr.port) + sizeof(addr.timestamp) + sizeof(addr.services);
+    }
+    return size;
+}
+
+std::vector<uint8_t> AddrMessage::serialize() const {
+    std::vector<uint8_t> data;
+    data.push_back(static_cast<uint8_t>(type_));
+    
+    // Serialize address count
+    uint32_t count = static_cast<uint32_t>(addresses_.size());
+    data.insert(data.end(), reinterpret_cast<const uint8_t*>(&count), 
+                reinterpret_cast<const uint8_t*>(&count) + sizeof(count));
+    
+    // Serialize each address
+    for (const auto& addr : addresses_) {
+        // Serialize address string length and content
+        uint32_t addr_len = static_cast<uint32_t>(addr.address.size());
+        data.insert(data.end(), reinterpret_cast<const uint8_t*>(&addr_len), 
+                    reinterpret_cast<const uint8_t*>(&addr_len) + sizeof(addr_len));
+        data.insert(data.end(), addr.address.begin(), addr.address.end());
+        
+        // Serialize port
+        data.insert(data.end(), reinterpret_cast<const uint8_t*>(&addr.port), 
+                    reinterpret_cast<const uint8_t*>(&addr.port) + sizeof(addr.port));
+        
+        // Serialize timestamp
+        data.insert(data.end(), reinterpret_cast<const uint8_t*>(&addr.timestamp), 
+                    reinterpret_cast<const uint8_t*>(&addr.timestamp) + sizeof(addr.timestamp));
+        
+        // Serialize services
+        data.insert(data.end(), reinterpret_cast<const uint8_t*>(&addr.services), 
+                    reinterpret_cast<const uint8_t*>(&addr.services) + sizeof(addr.services));
+    }
+    
+    return data;
+}
+
+bool AddrMessage::deserialize(const std::vector<uint8_t>& data) {
+    if (data.empty() || data[0] != static_cast<uint8_t>(type_)) {
+        return false;
+    }
+    
+    size_t offset = 1;
+    
+    // Deserialize address count
+    if (offset + sizeof(uint32_t) > data.size()) {
+        return false;
+    }
+    uint32_t count;
+    std::memcpy(&count, &data[offset], sizeof(count));
+    offset += sizeof(count);
+    
+    addresses_.clear();
+    addresses_.reserve(count);
+    
+    // Deserialize each address
+    for (uint32_t i = 0; i < count; ++i) {
+        PeerAddress addr;
+        
+        // Deserialize address string length
+        if (offset + sizeof(uint32_t) > data.size()) {
+            return false;
+        }
+        uint32_t addr_len;
+        std::memcpy(&addr_len, &data[offset], sizeof(addr_len));
+        offset += sizeof(addr_len);
+        
+        // Deserialize address string
+        if (offset + addr_len > data.size()) {
+            return false;
+        }
+        addr.address = std::string(reinterpret_cast<const char*>(&data[offset]), addr_len);
+        offset += addr_len;
+        
+        // Deserialize port
+        if (offset + sizeof(addr.port) > data.size()) {
+            return false;
+        }
+        std::memcpy(&addr.port, &data[offset], sizeof(addr.port));
+        offset += sizeof(addr.port);
+        
+        // Deserialize timestamp
+        if (offset + sizeof(addr.timestamp) > data.size()) {
+            return false;
+        }
+        std::memcpy(&addr.timestamp, &data[offset], sizeof(addr.timestamp));
+        offset += sizeof(addr.timestamp);
+        
+        // Deserialize services
+        if (offset + sizeof(addr.services) > data.size()) {
+            return false;
+        }
+        std::memcpy(&addr.services, &data[offset], sizeof(addr.services));
+        offset += sizeof(addr.services);
+        
+        addresses_.push_back(addr);
+    }
+    
+    return true;
+}
+
+nlohmann::json AddrMessage::toJson() const {
+    nlohmann::json json;
+    json["type"] = static_cast<int>(type_);
+    nlohmann::json addresses_json = nlohmann::json::array();
+    for (const auto& addr : addresses_) {
+        nlohmann::json addr_json;
+        addr_json["address"] = addr.address;
+        addr_json["port"] = addr.port;
+        addr_json["timestamp"] = addr.timestamp;
+        addr_json["services"] = addr.services;
+        addresses_json.push_back(addr_json);
+    }
+    json["addresses"] = addresses_json;
+    return json;
+}
+
+bool AddrMessage::fromJson(const nlohmann::json& json) {
+    try {
+        if (!json.contains("addresses")) {
+            return false;
+        }
+        
+        addresses_.clear();
+        for (const auto& addr_json : json.at("addresses")) {
+            PeerAddress addr;
+            addr.address = addr_json.at("address").get<std::string>();
+            addr.port = addr_json.at("port").get<uint16_t>();
+            addr.timestamp = addr_json.at("timestamp").get<uint64_t>();
+            addr.services = addr_json.value("services", static_cast<uint64_t>(0));
+            addresses_.push_back(addr);
+        }
+        return true;
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to deserialize AddrMessage: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool AddrMessage::validate() const {
+    // Validate that addresses are reasonable
+    for (const auto& addr : addresses_) {
+        if (addr.address.empty() || addr.port == 0) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace network

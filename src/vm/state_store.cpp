@@ -30,7 +30,10 @@ StateStore::StateStore(const std::string& db_path, const std::string& storage_ba
 }
 
 StateStore::~StateStore() {
-    shutdown();
+    // Only shutdown if initialized to avoid deadlocks
+    if (initialized_) {
+        shutdown();
+    }
 }
 
 bool StateStore::initialize() {

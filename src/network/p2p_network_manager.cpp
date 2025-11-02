@@ -5,6 +5,8 @@
 
 #include "network/p2p_network_manager.h"
 #include <algorithm>
+#include <thread>
+#include <chrono>
 
 namespace deo {
 namespace network {
@@ -42,14 +44,14 @@ bool P2PNetworkManager::initialize(std::shared_ptr<core::Blockchain> blockchain,
     // Initialize gossip protocol
     gossip_protocol_ = std::make_shared<GossipProtocol>(tcp_manager_, peer_manager_);
     
-    // Initialize mempools
-    transaction_mempool_ = std::make_shared<TransactionMempool>(tcp_manager_, peer_manager_);
+    // Initialize mempools with gossip protocol for efficient propagation
+    transaction_mempool_ = std::make_shared<TransactionMempool>(tcp_manager_, peer_manager_, gossip_protocol_);
     if (!transaction_mempool_->initialize()) {
         DEO_LOG_ERROR(NETWORKING, "Failed to initialize transaction mempool");
         return false;
     }
     
-    block_mempool_ = std::make_shared<BlockMempool>(tcp_manager_, peer_manager_);
+    block_mempool_ = std::make_shared<BlockMempool>(tcp_manager_, peer_manager_, gossip_protocol_);
     if (!block_mempool_->initialize()) {
         DEO_LOG_ERROR(NETWORKING, "Failed to initialize block mempool");
         return false;
@@ -173,6 +175,31 @@ void P2PNetworkManager::discoverPeers() {
     DEO_LOG_INFO(NETWORKING, "Starting peer discovery");
     peer_manager_->discoverPeers();
     tcp_manager_->discoverPeers();
+    
+    // After initial connection, request peer lists from connected peers
+    // This helps build a network topology
+    // Use shorter wait time to avoid blocking tests
+    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Wait for connections to establish
+    
+    auto connected_peers = peer_manager_->getConnectedPeers();
+    for (const auto& peer_address : connected_peers) {
+        // Parse peer address for rate limiting check
+        size_t colon_pos = peer_address.find(':');
+        if (colon_pos != std::string::npos) {
+            std::string addr = peer_address.substr(0, colon_pos);
+            uint16_t port = static_cast<uint16_t>(std::stoul(peer_address.substr(colon_pos + 1)));
+            
+            if (!peer_manager_->checkRateLimit(addr, port, "getaddr")) {
+                // Send GETADDR message
+                GetAddrMessage getaddr_msg;
+                tcp_manager_->sendToPeer(peer_address, getaddr_msg);
+                
+                // Record the request for rate limiting
+                peer_manager_->recordMessage(addr, port, "getaddr");
+                DEO_LOG_DEBUG(NETWORKING, "Sent GETADDR request to " + peer_address);
+            }
+        }
+    }
 }
 
 void P2PNetworkManager::broadcastTransaction(std::shared_ptr<core::Transaction> transaction) {
@@ -181,7 +208,21 @@ void P2PNetworkManager::broadcastTransaction(std::shared_ptr<core::Transaction> 
     }
     
     DEO_LOG_DEBUG(NETWORKING, "Broadcasting transaction: " + transaction->getId());
-    transaction_mempool_->broadcastNewTransaction(transaction);
+    
+    // Use gossip protocol for efficient propagation
+    if (gossip_protocol_) {
+        try {
+            // Serialize transaction to JSON for gossip protocol
+            nlohmann::json tx_json = transaction->toJson();
+            gossip_protocol_->broadcastTransaction(tx_json.dump());
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Gossip broadcast failed: " + std::string(e.what()) + ", falling back to mempool");
+            transaction_mempool_->broadcastNewTransaction(transaction);
+        }
+    } else {
+        // Fallback to mempool if gossip not available
+        transaction_mempool_->broadcastNewTransaction(transaction);
+    }
 }
 
 void P2PNetworkManager::handleIncomingTransaction(std::shared_ptr<core::Transaction> transaction, const std::string& peer_address) {
@@ -207,7 +248,21 @@ void P2PNetworkManager::broadcastBlock(std::shared_ptr<core::Block> block) {
     }
     
     DEO_LOG_INFO(NETWORKING, "Broadcasting block: " + block->getHash());
-    block_mempool_->broadcastNewBlock(block);
+    
+    // Use gossip protocol for efficient propagation
+    if (gossip_protocol_) {
+        try {
+            // Serialize block to JSON for gossip protocol
+            nlohmann::json block_json = block->toJson();
+            gossip_protocol_->broadcastBlock(block_json.dump());
+        } catch (const std::exception& e) {
+            DEO_LOG_ERROR(NETWORKING, "Gossip broadcast failed: " + std::string(e.what()) + ", falling back to mempool");
+            block_mempool_->broadcastNewBlock(block);
+        }
+    } else {
+        // Fallback to mempool if gossip not available
+        block_mempool_->broadcastNewBlock(block);
+    }
 }
 
 void P2PNetworkManager::handleIncomingBlock(std::shared_ptr<core::Block> block, const std::string& peer_address) {
@@ -237,6 +292,10 @@ std::shared_ptr<BlockMempool> P2PNetworkManager::getBlockMempool() const {
 
 std::shared_ptr<PeerManager> P2PNetworkManager::getPeerManager() const {
     return peer_manager_;
+}
+
+std::shared_ptr<GossipProtocol> P2PNetworkManager::getGossipProtocol() const {
+    return gossip_protocol_;
 }
 
 P2PNetworkManager::NetworkStats P2PNetworkManager::getNetworkStats() const {
@@ -307,6 +366,16 @@ void P2PNetworkManager::setupMessageHandlers() {
     tcp_manager_->setMessageHandler(MessageType::PONG, 
         [this](const NetworkMessage& message, const std::string& peer_address) {
             handlePongMessage(message, peer_address);
+        });
+    
+    tcp_manager_->setMessageHandler(MessageType::GETADDR, 
+        [this](const NetworkMessage& message, const std::string& peer_address) {
+            handleGetAddrMessage(message, peer_address);
+        });
+    
+    tcp_manager_->setMessageHandler(MessageType::ADDR, 
+        [this](const NetworkMessage& message, const std::string& peer_address) {
+            handleAddrMessage(message, peer_address);
         });
 }
 
@@ -493,6 +562,156 @@ void P2PNetworkManager::handlePongMessage(const NetworkMessage& message, const s
         
     } catch (const std::exception& e) {
         DEO_LOG_ERROR(NETWORKING, "Failed to handle PONG message: " + std::string(e.what()));
+        peer_manager_->reportMisbehavior(peer_address, 0, 5);
+    }
+}
+
+void P2PNetworkManager::handleGetAddrMessage(const NetworkMessage& message, const std::string& peer_address) {
+    try {
+        // Cast to GetAddrMessage
+        const GetAddrMessage* getaddr_message = dynamic_cast<const GetAddrMessage*>(&message);
+        if (!getaddr_message) {
+            DEO_LOG_ERROR(NETWORKING, "Invalid GETADDR message from " + peer_address);
+            peer_manager_->reportMisbehavior(peer_address, 0, 5);
+            return;
+        }
+        
+        DEO_LOG_DEBUG(NETWORKING, "Received GETADDR request from " + peer_address);
+        
+        // Get our best peers (up to 10, excluding the requester)
+        auto all_peers = peer_manager_->getConnectedPeers();
+        std::vector<PeerAddress> peer_addresses;
+        
+        // Limit to 10 addresses to avoid large messages
+        size_t max_addresses = 10;
+        size_t count = 0;
+        
+        for (const auto& peer_key : all_peers) {
+            if (count >= max_addresses) {
+                break;
+            }
+            
+            // Skip the requester
+            if (peer_key == peer_address) {
+                continue;
+            }
+            
+            // Parse peer address
+            size_t colon_pos = peer_key.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string addr = peer_key.substr(0, colon_pos);
+                uint16_t port = static_cast<uint16_t>(std::stoul(peer_key.substr(colon_pos + 1)));
+                
+                PeerAddress peer_addr;
+                peer_addr.address = addr;
+                peer_addr.port = port;
+                peer_addr.timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                peer_addr.services = 1; // Basic services flag
+                
+                peer_addresses.push_back(peer_addr);
+                count++;
+            }
+        }
+        
+        // Send ADDR response
+        if (!peer_addresses.empty()) {
+            AddrMessage addr_msg(peer_addresses);
+            tcp_manager_->sendToPeer(peer_address, addr_msg);
+            DEO_LOG_DEBUG(NETWORKING, "Sent " + std::to_string(peer_addresses.size()) + 
+                         " peer addresses to " + peer_address);
+            
+            // Report good behavior
+            size_t colon_pos = peer_address.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string addr = peer_address.substr(0, colon_pos);
+                uint16_t port = static_cast<uint16_t>(std::stoul(peer_address.substr(colon_pos + 1)));
+                peer_manager_->reportGoodBehavior(addr, port, 2);
+            }
+        } else {
+            DEO_LOG_DEBUG(NETWORKING, "No peer addresses to send to " + peer_address);
+        }
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to handle GETADDR message: " + std::string(e.what()));
+        peer_manager_->reportMisbehavior(peer_address, 0, 5);
+    }
+}
+
+void P2PNetworkManager::handleAddrMessage(const NetworkMessage& message, const std::string& peer_address) {
+    try {
+        // Cast to AddrMessage
+        const AddrMessage* addr_message = dynamic_cast<const AddrMessage*>(&message);
+        if (!addr_message) {
+            DEO_LOG_ERROR(NETWORKING, "Invalid ADDR message from " + peer_address);
+            peer_manager_->reportMisbehavior(peer_address, 0, 5);
+            return;
+        }
+        
+        if (!addr_message->validate()) {
+            DEO_LOG_WARNING(NETWORKING, "Invalid ADDR message content from " + peer_address);
+            peer_manager_->reportMisbehavior(peer_address, 0, 5);
+            return;
+        }
+        
+        DEO_LOG_DEBUG(NETWORKING, "Received ADDR message from " + peer_address + 
+                     " with " + std::to_string(addr_message->addresses_.size()) + " addresses");
+        
+        // Process received peer addresses
+        size_t new_peers_added = 0;
+        size_t attempted_connections = 0;
+        
+        for (const auto& peer_addr : addr_message->addresses_) {
+            // Skip invalid addresses
+            if (peer_addr.address.empty() || peer_addr.port == 0) {
+                DEO_LOG_DEBUG(NETWORKING, "Skipping invalid address from ADDR message");
+                continue;
+            }
+            
+            // Skip our own address
+            if (peer_addr.address == "127.0.0.1" && peer_addr.port == listen_port_) {
+                continue;
+            }
+            
+            // Check if peer already exists
+            if (peer_manager_->isPeerConnected(peer_addr.address, peer_addr.port)) {
+                DEO_LOG_DEBUG(NETWORKING, "Peer already connected: " + 
+                            peer_addr.address + ":" + std::to_string(peer_addr.port));
+                continue;
+            }
+            
+            // Add peer to peer manager
+            if (peer_manager_->addPeer(peer_addr.address, peer_addr.port)) {
+                new_peers_added++;
+                DEO_LOG_DEBUG(NETWORKING, "Added peer from ADDR message: " + 
+                            peer_addr.address + ":" + std::to_string(peer_addr.port));
+                
+                // Optionally attempt to connect to new peer (with rate limiting)
+                // This helps expand the network topology
+                if (attempted_connections < 3) { // Limit to 3 immediate connection attempts
+                    if (peer_manager_->checkRateLimit(peer_addr.address, peer_addr.port, "connect")) {
+                        connectToPeer(peer_addr.address, peer_addr.port);
+                        attempted_connections++;
+                    }
+                }
+            }
+        }
+        
+        if (new_peers_added > 0) {
+            DEO_LOG_INFO(NETWORKING, "Added " + std::to_string(new_peers_added) + 
+                        " new peers from " + peer_address);
+            
+            // Report good behavior
+            size_t colon_pos = peer_address.find(':');
+            if (colon_pos != std::string::npos) {
+                std::string addr = peer_address.substr(0, colon_pos);
+                uint16_t port = static_cast<uint16_t>(std::stoul(peer_address.substr(colon_pos + 1)));
+                peer_manager_->reportGoodBehavior(addr, port, new_peers_added);
+            }
+        }
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(NETWORKING, "Failed to handle ADDR message: " + std::string(e.what()));
         peer_manager_->reportMisbehavior(peer_address, 0, 5);
     }
 }

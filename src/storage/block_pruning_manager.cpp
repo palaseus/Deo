@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <thread>
 #include <condition_variable>
+#include <set>
 
 namespace deo {
 namespace storage {
@@ -173,29 +174,50 @@ uint64_t BlockPruningManager::performPruning(uint64_t current_height) {
             }
         }
         
-        // Prune blocks
-        for (const auto& block_hash : blocks_to_prune) {
-            // Archive block if archival is enabled
-            if (config_.enable_archival) {
+        // Group blocks by height and find the lowest height to prune
+        // For pruning, we typically delete from lowest height up to keep_blocks threshold
+        if (!blocks_to_prune.empty()) {
+            // Find the lowest height to prune
+            uint64_t lowest_prune_height = UINT64_MAX;
+            for (const auto& block_hash : blocks_to_prune) {
                 auto block = block_storage_->getBlock(block_hash);
                 if (block) {
-                    // Archive block (implementation would save to external storage)
-                    // For now, just log the archival
+                    uint64_t height = block->getHeader().height;
+                    if (height < lowest_prune_height) {
+                        lowest_prune_height = height;
+                    }
+                    
+                    // Archive block if archival is enabled
+                    if (config_.enable_archival) {
+                        // Archive block (implementation would save to external storage)
+                        DEO_LOG_DEBUG(STORAGE, "Would archive block at height " + std::to_string(height));
+                    }
                 }
             }
             
-            // Remove block from storage
-            // Note: This would require implementing block deletion in LevelDBBlockStorage
-            blocks_pruned++;
+            // Delete blocks from the lowest prune height onwards
+            // This efficiently deletes all blocks that should be pruned
+            if (lowest_prune_height != UINT64_MAX && lowest_prune_height > 0) {
+                // Calculate how many blocks we're about to delete
+                uint64_t storage_current_height = block_storage_->getCurrentHeight();
+                if (storage_current_height >= lowest_prune_height) {
+                    blocks_pruned = storage_current_height - lowest_prune_height + 1;
+                    
+                    // Use the existing deletion method
+                    if (block_storage_->deleteBlocksFromHeight(lowest_prune_height)) {
+                        DEO_LOG_INFO(STORAGE, "Pruned " + std::to_string(blocks_pruned) + 
+                                    " blocks from height " + std::to_string(lowest_prune_height));
+                    } else {
+                        DEO_LOG_ERROR(STORAGE, "Failed to prune blocks from height " + std::to_string(lowest_prune_height));
+                        blocks_pruned = 0;
+                    }
+                }
+            }
         }
         
-        // Prune state
-        for (uint64_t height : state_to_prune) {
-            if (shouldPruneState(height, current_height)) {
-                // Prune state for this block height
-                // Note: This would require implementing state pruning in LevelDBStateStorage
-                state_entries_pruned++;
-            }
+        // Prune state (coordinated with block pruning)
+        if (!state_to_prune.empty() && state_storage_) {
+            state_entries_pruned = performStatePruning(current_height);
         }
         
         updateStatistics(blocks_pruned, state_entries_pruned);
@@ -207,34 +229,91 @@ uint64_t BlockPruningManager::performPruning(uint64_t current_height) {
     return blocks_pruned;
 }
 
-uint64_t BlockPruningManager::performStatePruning(uint64_t current_height) {
-    if (!state_storage_) {
-        return 0;
+// Helper function to extract account addresses from a block
+static std::set<std::string> extractAccountAddresses(const std::shared_ptr<core::Block>& block) {
+    std::set<std::string> addresses;
+    
+    if (!block) {
+        return addresses;
     }
     
-    uint64_t state_entries_pruned = 0;
-    
-    try {
-        // Get all account addresses
-        auto account_addresses = state_storage_->getAllAccountAddresses();
+    // Extract addresses from all transactions in the block
+    for (const auto& tx : block->getTransactions()) {
+        if (!tx) {
+            continue;
+        }
         
-        for (const auto& address : account_addresses) {
-            auto account = state_storage_->getAccount(address);
-            if (account) {
-                // Check if account state should be pruned based on last update
-                // This is a simplified check - in practice, you'd need more sophisticated logic
-                if (shouldPruneState(account->last_updated, current_height)) {
-                    // Prune account state
-                    state_entries_pruned++;
-                }
+        // Extract from inputs - note: inputs reference previous outputs in UTXO model
+        // For account-based model, sender address might be derived from public_key
+        // For now, we focus on outputs which have explicit addresses
+        // TODO: Derive sender addresses from input public keys if needed
+        
+        // Extract from outputs (recipient addresses)
+        for (const auto& output : tx->getOutputs()) {
+            if (!output.recipient_address.empty()) {
+                addresses.insert(output.recipient_address);
             }
         }
         
-    } catch (const std::exception& e) {
-        // Log error but don't fail the operation
+        // Check for contract addresses in transaction data
+        // Contract deployment/execution might reference addresses
+        // This is simplified - in practice you'd parse contract calls
     }
     
-    return state_entries_pruned;
+    return addresses;
+}
+
+uint64_t BlockPruningManager::performStatePruning(uint64_t current_height) {
+    if (!state_storage_ || !block_storage_) {
+        return 0;
+    }
+    
+    std::lock_guard<std::mutex> lock(config_mutex_);
+    
+    // Get the number of blocks to keep state for
+    uint64_t keep_state_blocks = config_.keep_state_blocks > 0 ? config_.keep_state_blocks : config_.keep_blocks;
+    
+    if (keep_state_blocks == 0) {
+        // Don't prune state if keep_state_blocks is 0 (keep all state)
+        return 0;
+    }
+    
+    try {
+        // Collect account addresses from recent blocks (the ones we're keeping)
+        std::set<std::string> recent_accounts;
+        
+        // Calculate the starting height for recent blocks
+        uint64_t start_height = (current_height >= keep_state_blocks) ? 
+                               (current_height - keep_state_blocks + 1) : 0;
+        
+        // Get all blocks in the range we're keeping
+        std::vector<std::shared_ptr<core::Block>> recent_blocks = 
+            block_storage_->getBlocksInRange(start_height, current_height);
+        
+        // Extract all account addresses from recent blocks
+        for (const auto& block : recent_blocks) {
+            if (block) {
+                auto block_accounts = extractAccountAddresses(block);
+                recent_accounts.insert(block_accounts.begin(), block_accounts.end());
+            }
+        }
+        
+        DEO_LOG_DEBUG(STORAGE, "Found " + std::to_string(recent_accounts.size()) + 
+                     " unique accounts in recent " + std::to_string(keep_state_blocks) + " blocks");
+        
+        // Use LevelDBStateStorage's pruneState method with recent accounts
+        uint64_t accounts_pruned = state_storage_->pruneState(keep_state_blocks, current_height, recent_accounts);
+        
+        DEO_LOG_INFO(STORAGE, "State pruning completed: " + std::to_string(accounts_pruned) + 
+                    " accounts pruned (keeping state for " + std::to_string(keep_state_blocks) + " blocks, " +
+                    std::to_string(recent_accounts.size()) + " accounts preserved)");
+        
+        return accounts_pruned;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(STORAGE, "Failed to perform state pruning: " + std::string(e.what()));
+        return 0;
+    }
 }
 
 bool BlockPruningManager::createSnapshot(uint64_t block_height) {

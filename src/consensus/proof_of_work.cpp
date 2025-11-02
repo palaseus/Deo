@@ -120,7 +120,14 @@ bool ProofOfWork::validateBlock(std::shared_ptr<core::Block> block) {
         return false;
     }
     
-    // Validate proof of work
+    // Skip difficulty validation for genesis blocks (height 0)
+    // Genesis blocks are special and don't require proof of work
+    if (block->getHeight() == 0 || block->isGenesis()) {
+        DEO_LOG_DEBUG(CONSENSUS, "Genesis block - skipping difficulty validation");
+        return true;
+    }
+    
+    // Validate proof of work for non-genesis blocks
     // Use the same hash calculation as mining (includes nonce)
     std::string block_hash = calculateBlockHash(block, block->getNonce());
     std::string target_hash = calculateTargetHash(current_difficulty_);

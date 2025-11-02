@@ -28,7 +28,7 @@ protected:
         config_.enable_mining = true; // Enable mining for block production
         config_.mining_difficulty = 1; // Low difficulty for faster benchmarking
         config_.enable_json_rpc = false;
-        config_.storage_backend = "json";
+        config_.storage_backend = storage_backend_;
         
         node_runtime_ = std::make_unique<node::NodeRuntime>(config_);
         ASSERT_TRUE(node_runtime_->initialize());
@@ -58,6 +58,7 @@ protected:
     node::NodeConfig config_;
     std::unique_ptr<node::NodeRuntime> node_runtime_;
     std::string test_dir_;
+    std::string storage_backend_ = "json"; // Default, can be overridden
 };
 
 TEST_F(BlockProductionBenchmark, BlockCreationTime) {

@@ -16,6 +16,7 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <atomic>
 
 namespace deo {
 namespace node {
@@ -93,8 +94,7 @@ NodeRuntime::NodeRuntime(const NodeConfig& config)
     , running_(false)
     , mining_enabled_(config.enable_mining)
     , stop_threads_(false) {
-    
-    DEO_LOG_DEBUG(BLOCKCHAIN, "NodeRuntime created with config");
+    // Constructor is minimal - no logging to avoid potential initialization deadlocks
 }
 
 NodeRuntime::~NodeRuntime() {
@@ -107,11 +107,15 @@ bool NodeRuntime::initialize() {
     
     try {
         // Create data directories
+        DEO_LOG_INFO(BLOCKCHAIN, "Creating data directories");
         std::filesystem::create_directories(config_.data_directory);
         std::filesystem::create_directories(config_.state_directory);
+        DEO_LOG_INFO(BLOCKCHAIN, "Directories created");
         
         // Initialize state store with storage backend
+        DEO_LOG_INFO(BLOCKCHAIN, "Creating StateStore");
         state_store_ = std::make_shared<vm::StateStore>(config_.state_directory + "/state", config_.storage_backend);
+        DEO_LOG_INFO(BLOCKCHAIN, "StateStore created, calling initialize()");
         if (!state_store_->initialize()) {
             DEO_LOG_ERROR(BLOCKCHAIN, "Failed to initialize state store");
             return false;
@@ -135,6 +139,12 @@ bool NodeRuntime::initialize() {
         blockchain_config.enable_networking = config_.enable_p2p;
         blockchain_config.storage_backend = config_.storage_backend; // Pass storage backend to blockchain
         blockchain_ = std::make_unique<core::Blockchain>(blockchain_config);
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain object created, initializing...");
+        if (!blockchain_->initialize()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Failed to initialize blockchain");
+            return false;
+        }
+        DEO_LOG_INFO(BLOCKCHAIN, "Blockchain initialized, loading genesis block...");
         if (!loadBlockchain()) {
             DEO_LOG_ERROR(BLOCKCHAIN, "Failed to load blockchain");
             return false;
@@ -191,8 +201,8 @@ bool NodeRuntime::initialize() {
             DEO_LOG_INFO(BLOCKCHAIN, "P2P network manager initialized on port " + std::to_string(config_.p2p_port));
             
             // Initialize chain synchronization manager if LevelDB storage is available
-            // FastSyncManager requires LevelDB storage
-            if (config_.storage_backend == "leveldb") {
+            // FastSyncManager requires LevelDB storage AND P2P network
+            if (config_.storage_backend == "leveldb" && config_.enable_p2p) {
                 // Get LevelDB storage instances from blockchain
                 auto leveldb_block_storage = blockchain_->getLevelDBBlockStorage();
                 auto leveldb_state_storage = blockchain_->getLevelDBStateStorage();
@@ -224,7 +234,12 @@ bool NodeRuntime::initialize() {
                     DEO_LOG_WARNING(BLOCKCHAIN, "LevelDB storage instances or P2P network not available, sync manager not initialized");
                 }
             } else {
-                DEO_LOG_INFO(BLOCKCHAIN, "Sync manager requires LevelDB backend (currently using: " + config_.storage_backend + ")");
+                if (config_.storage_backend != "leveldb") {
+                    DEO_LOG_INFO(BLOCKCHAIN, "Sync manager requires LevelDB backend (currently using: " + config_.storage_backend + ")");
+                }
+                if (!config_.enable_p2p) {
+                    DEO_LOG_INFO(BLOCKCHAIN, "Sync manager requires P2P networking (currently disabled)");
+                }
             }
         }
         
@@ -294,7 +309,9 @@ bool NodeRuntime::start() {
                     p2p_network_->connectToPeer(address, port);
                 }
             }
-            DEO_LOG_INFO(BLOCKCHAIN, "P2P network started");
+            DEO_LOG_INFO(BLOCKCHAIN, "P2P network started and listening on port " + std::to_string(config_.p2p_port));
+        } else if (config_.enable_p2p && p2p_network_) {
+            DEO_LOG_WARNING(BLOCKCHAIN, "P2P network configured but not running");
         }
         
         // Start JSON-RPC server if enabled
@@ -349,13 +366,65 @@ void NodeRuntime::stop() {
         json_rpc_server_->stop();
     }
     
-    // Wait for threads to finish
+    // Wait briefly for threads to check stop flags and exit
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    
+    // Join threads with timeout protection using helper threads
+    // join() can block indefinitely, so we use a helper thread with a timeout
     if (block_production_thread_.joinable()) {
-        block_production_thread_.join();
+        std::atomic<bool> join_complete(false);
+        std::thread join_helper([this, &join_complete]() {
+            if (block_production_thread_.joinable()) {
+                block_production_thread_.join();
+            }
+            join_complete = true;
+        });
+        
+        // Wait up to 500ms for join to complete
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (!join_complete && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        if (!join_complete) {
+            // Join timed out - thread may be stuck, detach to avoid hanging
+            DEO_LOG_WARNING(BLOCKCHAIN, "Block production thread join timed out, detaching");
+            if (block_production_thread_.joinable()) {
+                block_production_thread_.detach();
+            }
+            join_helper.detach();
+        } else {
+            if (join_helper.joinable()) {
+                join_helper.join();
+            }
+        }
     }
     
     if (mempool_thread_.joinable()) {
-        mempool_thread_.join();
+        std::atomic<bool> join_complete(false);
+        std::thread join_helper([this, &join_complete]() {
+            if (mempool_thread_.joinable()) {
+                mempool_thread_.join();
+            }
+            join_complete = true;
+        });
+        
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (!join_complete && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
+        if (!join_complete) {
+            DEO_LOG_WARNING(BLOCKCHAIN, "Mempool thread join timed out, detaching");
+            if (mempool_thread_.joinable()) {
+                mempool_thread_.detach();
+            }
+            join_helper.detach();
+        } else {
+            if (join_helper.joinable()) {
+                join_helper.join();
+            }
+        }
     }
     
     // Save blockchain
@@ -620,10 +689,11 @@ std::shared_ptr<core::Transaction> NodeRuntime::getTransaction(const std::string
 }
 
 std::vector<std::shared_ptr<core::Transaction>> NodeRuntime::getMempoolTransactions(size_t max_count) const {
-    if (!blockchain_) {
+    if (!mempool_) {
         return {};
     }
-    return blockchain_->getMempoolTransactions(max_count);
+    // Use the same mempool that addTransaction() uses
+    return mempool_->getTransactionsForBlock(max_count > 0 ? max_count : mempool_->size());
 }
 
 uint64_t NodeRuntime::getBalance(const std::string& address) const {
@@ -665,12 +735,18 @@ void NodeRuntime::blockProductionLoop() {
                 }
             }
             
-            // Wait before next iteration
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            // Wait before next iteration, but check stop flag frequently
+            // Use shorter sleeps to ensure quick shutdown
+            for (int i = 0; i < 10 && !stop_threads_ && running_; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
             
         } catch (const std::exception& e) {
             DEO_LOG_ERROR(BLOCKCHAIN, "Error in block production loop: " + std::string(e.what()));
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            // Check stop flag more frequently during error recovery
+            for (int i = 0; i < 10 && !stop_threads_ && running_; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
     }
     
@@ -681,16 +757,23 @@ void NodeRuntime::mempoolLoop() {
     DEO_LOG_INFO(BLOCKCHAIN, "Mempool management loop started");
     
     while (!stop_threads_ && running_) {
+        // Check stop flags first before doing any work
+        if (stop_threads_ || !running_) {
+            break;
+        }
+        
         try {
             // Update statistics
             updateStatistics();
             
-            // Wait before next iteration
-            std::this_thread::sleep_for(std::chrono::seconds(10));
+            // Wait before next iteration, but check stop flag frequently
+            // Use shorter sleeps to ensure quick shutdown - check every 100ms
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             
         } catch (const std::exception& e) {
             DEO_LOG_ERROR(BLOCKCHAIN, "Error in mempool loop: " + std::string(e.what()));
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            // Check stop flag more frequently during error recovery
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     }
     
@@ -913,12 +996,23 @@ void NodeRuntime::updateStatistics() {
 
 bool NodeRuntime::loadBlockchain() {
     try {
-        // For now, we'll just initialize the blockchain
-        // In a real implementation, you would load from disk
-        
-        if (!initializeGenesisBlock()) {
-            DEO_LOG_ERROR(BLOCKCHAIN, "Failed to initialize genesis block");
+        // Blockchain::initialize() already creates the genesis block if blocks are empty
+        // So we don't need to create it again here - just verify it exists
+        if (!blockchain_ || !blockchain_->isInitialized()) {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Blockchain not initialized");
             return false;
+        }
+        
+        auto state = blockchain_->getState();
+        if (state.best_block_hash.empty()) {
+            // No genesis block found, create one
+            DEO_LOG_INFO(BLOCKCHAIN, "No genesis block found, creating one...");
+            if (!initializeGenesisBlock()) {
+                DEO_LOG_ERROR(BLOCKCHAIN, "Failed to initialize genesis block");
+                return false;
+            }
+        } else {
+            DEO_LOG_INFO(BLOCKCHAIN, "Genesis block already exists at height " + std::to_string(state.height));
         }
         
         DEO_LOG_INFO(BLOCKCHAIN, "Blockchain loaded successfully");
@@ -946,7 +1040,14 @@ bool NodeRuntime::saveBlockchain() {
 
 bool NodeRuntime::initializeGenesisBlock() {
     try {
-        // Create genesis block
+        // Check if genesis block already exists
+        auto state = blockchain_->getState();
+        if (!state.best_block_hash.empty()) {
+            DEO_LOG_INFO(BLOCKCHAIN, "Genesis block already exists");
+            return true;
+        }
+        
+        // Create genesis block manually (since createGenesisBlock() is private)
         core::BlockHeader genesis_header(
             1, // version
             "0000000000000000000000000000000000000000000000000000000000000000", // previous hash
@@ -954,7 +1055,7 @@ bool NodeRuntime::initializeGenesisBlock() {
             std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count(), // timestamp
             0, // nonce
-            1, // difficulty
+            config_.mining_difficulty, // difficulty (from config)
             0, // height
             0 // transaction count
         );
@@ -962,10 +1063,13 @@ bool NodeRuntime::initializeGenesisBlock() {
         auto genesis_block = std::make_shared<core::Block>(genesis_header, std::vector<std::shared_ptr<core::Transaction>>());
         
         // Add genesis block to blockchain
+        // This should work now that we skip difficulty validation for genesis blocks
         bool added = blockchain_->addBlock(genesis_block);
         
         if (added) {
             DEO_LOG_INFO(BLOCKCHAIN, "Genesis block initialized");
+        } else {
+            DEO_LOG_ERROR(BLOCKCHAIN, "Failed to add genesis block to blockchain");
         }
         
         return added;

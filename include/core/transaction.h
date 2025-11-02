@@ -327,6 +327,12 @@ private:
     std::string getSerializedData() const;
     
     /**
+     * @brief Get serialized data for signing (excluding signatures)
+     * @return Serialized data string without signatures
+     */
+    std::string getSerializedDataForSigning() const;
+    
+    /**
      * @brief Update cached hash
      */
     void updateHash() const;

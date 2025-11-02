@@ -158,8 +158,8 @@ struct NodeStatistics {
  * - Transaction mempool
  * - Block production and validation
  * - VM integration for smart contracts
- * - P2P networking (placeholder)
- * - JSON-RPC API (placeholder)
+ * - P2P networking with gossip protocol
+ * - JSON-RPC API with Web3 compatibility
  */
 class NodeRuntime {
 public:

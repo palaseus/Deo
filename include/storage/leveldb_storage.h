@@ -19,6 +19,7 @@
 #include <leveldb/iterator.h>
 #include <leveldb/filter_policy.h>
 #include <leveldb/cache.h>
+#include <set>
 
 #include "core/block.h"
 #include "core/transaction.h"
@@ -284,6 +285,17 @@ public:
     uint64_t getContractCount();
     uint64_t getStorageEntryCount();
     std::string getStatistics() const;
+    
+    // State pruning
+    /**
+     * @brief Prune state by removing accounts not referenced in recent blocks
+     * @param keep_blocks Number of recent blocks to keep state for
+     * @param current_height Current blockchain height
+     * @param recent_accounts Set of account addresses referenced in recent blocks (to keep)
+     * @return Number of accounts pruned
+     */
+    uint64_t pruneState(uint64_t keep_blocks, uint64_t current_height, 
+                       const std::set<std::string>& recent_accounts = {});
     
     // Maintenance
     bool compactDatabase();

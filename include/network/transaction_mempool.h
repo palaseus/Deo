@@ -21,6 +21,13 @@
 #include "network/peer_manager.h"
 #include "utils/logger.h"
 
+// Forward declaration
+namespace deo {
+namespace network {
+class GossipProtocol;
+}
+}
+
 namespace deo {
 namespace network {
 
@@ -50,7 +57,8 @@ struct MempoolEntry {
 class TransactionMempool {
 public:
     TransactionMempool(std::shared_ptr<TcpNetworkManager> network_manager,
-                       std::shared_ptr<PeerManager> peer_manager);
+                       std::shared_ptr<PeerManager> peer_manager,
+                       std::shared_ptr<GossipProtocol> gossip_protocol = nullptr);
     ~TransactionMempool();
     
     bool initialize();
@@ -98,6 +106,7 @@ public:
 private:
     std::shared_ptr<TcpNetworkManager> network_manager_;
     std::shared_ptr<PeerManager> peer_manager_;
+    std::shared_ptr<GossipProtocol> gossip_protocol_;
     
     mutable std::mutex mempool_mutex_;
     std::map<std::string, MempoolEntry> transactions_;
@@ -139,7 +148,8 @@ private:
 class BlockMempool {
 public:
     BlockMempool(std::shared_ptr<TcpNetworkManager> network_manager,
-                 std::shared_ptr<PeerManager> peer_manager);
+                 std::shared_ptr<PeerManager> peer_manager,
+                 std::shared_ptr<GossipProtocol> gossip_protocol = nullptr);
     ~BlockMempool();
     
     bool initialize();
@@ -178,6 +188,7 @@ public:
 private:
     std::shared_ptr<TcpNetworkManager> network_manager_;
     std::shared_ptr<PeerManager> peer_manager_;
+    std::shared_ptr<GossipProtocol> gossip_protocol_;
     
     mutable std::mutex block_mempool_mutex_;
     std::map<std::string, std::shared_ptr<core::Block>> blocks_;
@@ -201,3 +212,6 @@ private:
 
 } // namespace network
 } // namespace deo
+
+// Include after forward declaration
+#include "network/peer_manager.h"

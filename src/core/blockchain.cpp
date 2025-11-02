@@ -46,6 +46,14 @@ bool Blockchain::initialize() {
         return true;
     }
     
+    // Initialize storage backend preference from config
+    // Default to leveldb if storage_backend is empty or set to "leveldb"
+    if (config_.storage_backend.empty() || config_.storage_backend == "leveldb") {
+        use_leveldb_ = true;
+    } else {
+        use_leveldb_ = false;
+    }
+    
     // Create data directory if it doesn't exist
     if (!std::filesystem::exists(config_.data_directory)) {
         try {

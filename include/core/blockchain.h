@@ -62,7 +62,7 @@ struct BlockchainConfig {
     uint32_t initial_difficulty;       ///< Initial mining difficulty
     bool enable_mining;                ///< Whether to enable mining
     bool enable_networking;            ///< Whether to enable networking
-    std::string storage_backend;       ///< Storage backend: "leveldb" or "json" (default: "json")
+    std::string storage_backend;       ///< Storage backend: "leveldb" or "json" (default: "leveldb")
 };
 
 /**

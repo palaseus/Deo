@@ -1,12 +1,32 @@
 # Advanced Consensus Mechanisms
 
+## ⚠️ IMPORTANT STATUS NOTE
+
+**This document describes PLANNED/FUTURE advanced consensus mechanisms.**
+
+**Currently Implemented and Available:**
+- ✅ **Proof of Work (PoW)** - Fully implemented (`src/consensus/proof_of_work.cpp`)
+- ✅ **Proof of Stake (PoS)** - Fully implemented (`src/consensus/proof_of_stake.cpp`)
+- ✅ **Proof of Authority (PoA)** - Fully implemented (`src/consensus/proof_of_authority.cpp`)
+
+**NOT YET IMPLEMENTED (Interface Definitions Only):**
+- ❌ **HybridConsensus** - Header exists, no implementation file
+- ❌ **DelegatedProofOfStake (DPoS)** - Header exists, no implementation file
+- ❌ **PracticalByzantineFaultTolerance (PBFT)** - Header exists, no implementation file
+- ❌ **ConsensusManager** - Header exists, no implementation file
+- ❌ **ConsensusOptimizer** - Header exists, no implementation file
+
+**Warning**: Attempting to use the non-implemented mechanisms will result in linker errors. These classes exist only as interface definitions in `src/consensus/advanced_consensus.h`.
+
+See `docs/ADVANCED_CONSENSUS_STATUS.md` for detailed status information.
+
 ## Overview
 
-The Deo Blockchain includes advanced consensus mechanisms beyond traditional Proof of Work and Proof of Stake, providing flexibility for different use cases and requirements.
+The Deo Blockchain is designed to support advanced consensus mechanisms beyond traditional Proof of Work and Proof of Stake. Currently, only PoW, PoS, and PoA are implemented. The mechanisms described below are planned for future implementation.
 
-## Available Consensus Mechanisms
+## Planned Consensus Mechanisms
 
-### 1. Hybrid Consensus
+### 1. Hybrid Consensus (PLANNED - NOT IMPLEMENTED)
 
 Combines multiple consensus mechanisms with weighted voting:
 
@@ -24,9 +44,11 @@ hybrid_consensus->addConsensusMechanism(pos_engine, 0.4);  // 40% weight
 bool valid = hybrid_consensus->validateBlock(block);
 ```
 
-### 2. Delegated Proof of Stake (DPoS)
+### 2. Delegated Proof of Stake (DPoS) (PLANNED - NOT IMPLEMENTED)
 
 Efficient consensus mechanism with delegate voting:
+
+**Status**: Interface defined in `src/consensus/advanced_consensus.h`, implementation pending.
 
 ```cpp
 // Create DPoS consensus
@@ -43,9 +65,11 @@ dpos->voteForDelegate("voter1", "delegate1", 500000);
 std::string producer = dpos->getCurrentProducer();
 ```
 
-### 3. Practical Byzantine Fault Tolerance (PBFT)
+### 3. Practical Byzantine Fault Tolerance (PBFT) (PLANNED - NOT IMPLEMENTED)
 
 High-security consensus for permissioned networks:
+
+**Status**: Interface defined in `src/consensus/advanced_consensus.h`, implementation pending.
 
 ```cpp
 // Create PBFT consensus
@@ -61,9 +85,11 @@ pbft->prepare(block);
 pbft->commit(block);
 ```
 
-### 4. Proof of Authority (PoA)
+### 4. Proof of Authority (PoA) ✅ IMPLEMENTED
 
 Efficient consensus for permissioned networks:
+
+**Status**: Fully implemented in `src/consensus/proof_of_authority.cpp`.
 
 ```cpp
 // Create PoA consensus
@@ -77,7 +103,9 @@ poa->addAuthority("authority2", "public_key_2");
 std::string authority = poa->getCurrentAuthority();
 ```
 
-## Consensus Manager
+## Consensus Manager (PLANNED - NOT IMPLEMENTED)
+
+**Status**: Interface defined in `src/consensus/advanced_consensus.h`, implementation pending.
 
 ### Managing Multiple Consensus Mechanisms
 
@@ -97,7 +125,9 @@ manager->setActiveConsensus("pow");
 bool valid = manager->validateBlock(block);
 ```
 
-## Consensus Optimization
+## Consensus Optimization (PLANNED - NOT IMPLEMENTED)
+
+**Status**: Interface defined in `src/consensus/advanced_consensus.h`, implementation pending.
 
 ### Performance Optimization
 
@@ -241,6 +271,39 @@ for (const auto& metric : metrics) {
 }
 ```
 
+## Implementation Roadmap
+
+### Current Status
+- ✅ PoW, PoS, PoA fully implemented and tested
+- ❌ DPoS, PBFT, Hybrid, ConsensusManager, ConsensusOptimizer: Interface definitions only
+
+### Future Work
+1. **DPoS Implementation** (Priority: Medium)
+   - Delegate management and voting
+   - Producer rotation mechanism
+   - Slashing conditions
+
+2. **PBFT Implementation** (Priority: Low)
+   - Three-phase consensus protocol
+   - View change mechanism
+   - Validator management
+
+3. **Hybrid Consensus** (Priority: Low)
+   - Multi-mechanism integration
+   - Weighted voting system
+   - Consensus score calculation
+
+4. **ConsensusManager** (Priority: Low)
+   - Multiple consensus engine management
+   - Dynamic consensus switching
+
+5. **ConsensusOptimizer** (Priority: Low)
+   - Performance monitoring
+   - Parameter tuning
+   - Optimization recommendations
+
 ## Conclusion
 
-The advanced consensus mechanisms provide flexibility and efficiency for different blockchain use cases. By selecting the appropriate consensus mechanism and optimizing its parameters, you can achieve the desired balance between security, efficiency, and decentralization for your blockchain application.
+**Note**: The advanced consensus mechanisms described in this document (except PoA) are planned for future implementation. Currently, only Proof of Work, Proof of Stake, and Proof of Authority are fully implemented and available for use.
+
+If you need these features, please refer to the implementation roadmap above or contribute to the development of these mechanisms.

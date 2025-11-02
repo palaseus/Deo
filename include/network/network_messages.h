@@ -328,6 +328,60 @@ public:
 };
 
 /**
+ * @brief Peer address entry
+ */
+struct PeerAddress {
+    std::string address;                    ///< IP address
+    uint16_t port;                         ///< Port number
+    uint64_t timestamp;                    ///< Last seen timestamp
+    uint64_t services;                     ///< Services flag
+};
+
+/**
+ * @brief GetAddr message for requesting peer addresses
+ */
+class GetAddrMessage : public NetworkMessage {
+public:
+    /**
+     * @brief Constructor
+     */
+    GetAddrMessage();
+    
+    size_t getSize() const override;
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t>& data) override;
+    nlohmann::json toJson() const override;
+    bool fromJson(const nlohmann::json& json) override;
+    bool validate() const override;
+};
+
+/**
+ * @brief Addr message for sending peer addresses
+ */
+class AddrMessage : public NetworkMessage {
+public:
+    /**
+     * @brief Constructor
+     */
+    AddrMessage();
+    
+    /**
+     * @brief Constructor with peer addresses
+     * @param addresses List of peer addresses
+     */
+    explicit AddrMessage(const std::vector<PeerAddress>& addresses);
+    
+    std::vector<PeerAddress> addresses_;    ///< List of peer addresses
+    
+    size_t getSize() const override;
+    std::vector<uint8_t> serialize() const override;
+    bool deserialize(const std::vector<uint8_t>& data) override;
+    nlohmann::json toJson() const override;
+    bool fromJson(const nlohmann::json& json) override;
+    bool validate() const override;
+};
+
+/**
  * @brief Message factory for creating message instances
  */
 class MessageFactory {
@@ -353,6 +407,10 @@ public:
                 return std::make_unique<PingMessage>();
             case MessageType::PONG:
                 return std::make_unique<PongMessage>();
+            case MessageType::GETADDR:
+                return std::make_unique<GetAddrMessage>();
+            case MessageType::ADDR:
+                return std::make_unique<AddrMessage>();
             case MessageType::GETBLOCKS:
                 return std::make_unique<GetDataMessage>(); // Use GetDataMessage for block requests
             case MessageType::GETHEADERS:

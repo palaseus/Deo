@@ -528,13 +528,19 @@ void TcpNetworkManager::listenerLoop() {
             inet_ntop(AF_INET, &client_addr.sin_addr, client_address, INET_ADDRSTRLEN);
             [[maybe_unused]] uint16_t client_port = ntohs(client_addr.sin_port);
             
-            handleNewConnection(client_socket, std::string(client_address));
+            // Only handle connection if still running
+            if (running_) {
+                handleNewConnection(client_socket, std::string(client_address));
+            } else {
+                close(client_socket);
+            }
         } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
             if (running_) {
                 DEO_LOG_ERROR(NETWORKING, "Accept failed: " + std::string(strerror(errno)));
             }
         }
         
+        // Check running flag frequently
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     
@@ -609,11 +615,18 @@ void TcpNetworkManager::handleNewConnection(int client_socket, const std::string
         while (running_ && connection->isConnected()) {
             auto message = connection->receiveMessage();
             if (message) {
-                std::lock_guard<std::mutex> lock(message_queue_mutex_);
-                message_queue_.push({std::move(message), connection->getPeerAddress()});
-                message_condition_.notify_one();
+                {
+                    std::lock_guard<std::mutex> lock(message_queue_mutex_);
+                    if (running_) { // Only add message if still running
+                        message_queue_.push({std::move(message), connection->getPeerAddress()});
+                        message_condition_.notify_one();
+                    }
+                }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            // Check running flag frequently to exit quickly on shutdown
+            for (int i = 0; i < 10 && running_ && connection->isConnected(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
         }
         
         handlePeerDisconnection(peer_key);

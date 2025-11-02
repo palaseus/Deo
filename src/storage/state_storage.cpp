@@ -11,6 +11,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
+#include <chrono>
 
 namespace deo {
 namespace storage {
@@ -316,21 +318,122 @@ bool StateStorage::compact() {
 bool StateStorage::backup(const std::string& backup_path) const {
     DEO_LOG_INFO(STORAGE, "Backing up state storage to: " + backup_path);
     
-    // Note: In a real implementation, we would create a backup
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(STORAGE, "State storage backup not fully implemented yet");
-    
-    return true;
+    try {
+        std::lock_guard<std::mutex> lock(storage_mutex_);
+        
+        // Create backup directory if it doesn't exist
+        std::filesystem::path backup_dir = std::filesystem::path(backup_path).parent_path();
+        if (!backup_dir.empty() && !std::filesystem::exists(backup_dir)) {
+            std::filesystem::create_directories(backup_dir);
+        }
+        
+        // Serialize all account states to JSON
+        nlohmann::json backup_json;
+        backup_json["version"] = "1.0";
+        backup_json["timestamp"] = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        backup_json["accounts"] = nlohmann::json::object();
+        
+        for (const auto& [address, account] : account_cache_) {
+            nlohmann::json account_json;
+            account_json["balance"] = account->balance;
+            account_json["nonce"] = account->nonce;
+            account_json["code_hash"] = account->code_hash;
+            account_json["last_updated"] = account->last_updated;
+            
+            // Serialize storage
+            nlohmann::json storage_json;
+            for (const auto& [key, value] : account->storage) {
+                storage_json[key] = value;
+            }
+            account_json["storage"] = storage_json;
+            
+            backup_json["accounts"][address] = account_json;
+        }
+        
+        // Write backup file
+        std::ofstream backup_file(backup_path);
+        if (!backup_file.is_open()) {
+            DEO_LOG_ERROR(STORAGE, "Failed to open backup file: " + backup_path);
+            return false;
+        }
+        
+        backup_file << backup_json.dump(2);
+        backup_file.close();
+        
+        DEO_LOG_INFO(STORAGE, "Backup created successfully with " + 
+                     std::to_string(account_cache_.size()) + " accounts");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(STORAGE, "Failed to create backup: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool StateStorage::restore(const std::string& backup_path) {
     DEO_LOG_INFO(STORAGE, "Restoring state storage from: " + backup_path);
     
-    // Note: In a real implementation, we would restore from backup
-    // This is a placeholder implementation
-    DEO_LOG_WARNING(STORAGE, "State storage restore not fully implemented yet");
-    
-    return true;
+    try {
+        if (!std::filesystem::exists(backup_path)) {
+            DEO_LOG_ERROR(STORAGE, "Backup file does not exist: " + backup_path);
+            return false;
+        }
+        
+        // Read backup file
+        std::ifstream backup_file(backup_path);
+        if (!backup_file.is_open()) {
+            DEO_LOG_ERROR(STORAGE, "Failed to open backup file: " + backup_path);
+            return false;
+        }
+        
+        nlohmann::json backup_json;
+        backup_file >> backup_json;
+        backup_file.close();
+        
+        // Clear existing state
+        {
+            std::lock_guard<std::mutex> lock(storage_mutex_);
+            account_cache_.clear();
+        }
+        
+        // Restore accounts from backup
+        if (!backup_json.contains("accounts") || !backup_json["accounts"].is_object()) {
+            DEO_LOG_ERROR(STORAGE, "Invalid backup file format: missing accounts");
+            return false;
+        }
+        
+        size_t restored_count = 0;
+        for (auto& [address, account_json] : backup_json["accounts"].items()) {
+            auto account = std::make_shared<AccountState>();
+            account->address = address;
+            account->balance = account_json.value("balance", 0ULL);
+            account->nonce = account_json.value("nonce", 0ULL);
+            account->code_hash = account_json.value("code_hash", "");
+            account->last_updated = account_json.value("last_updated", 0ULL);
+            
+            // Restore storage
+            if (account_json.contains("storage") && account_json["storage"].is_object()) {
+                for (auto& [key, value] : account_json["storage"].items()) {
+                    account->storage[key] = value.get<std::string>();
+                }
+            }
+            
+            {
+                std::lock_guard<std::mutex> lock(storage_mutex_);
+                account_cache_[address] = account;
+            }
+            
+            restored_count++;
+        }
+        
+        DEO_LOG_INFO(STORAGE, "Restored " + std::to_string(restored_count) + " accounts from backup");
+        return true;
+        
+    } catch (const std::exception& e) {
+        DEO_LOG_ERROR(STORAGE, "Failed to restore from backup: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool StateStorage::loadState() {

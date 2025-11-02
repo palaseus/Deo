@@ -56,10 +56,33 @@ void PeerManager::discoverPeers() {
     for (const auto& [address, port] : bootstrap_nodes_) {
         addPeer(address, port);
     }
+    
+    // After connecting to bootstrap nodes, request peer lists from them
+    // This will be called by the network layer after connections are established
+    DEO_LOG_DEBUG(NETWORKING, "Peer discovery initialized with " + 
+                  std::to_string(bootstrap_nodes_.size()) + " bootstrap nodes");
 }
 
 void PeerManager::requestPeerList(const std::string& peer_address) {
     DEO_LOG_DEBUG(NETWORKING, "Requesting peer list from " + peer_address);
+    
+    // Parse peer address (format: "ip:port")
+    size_t colon_pos = peer_address.find(':');
+    if (colon_pos == std::string::npos) {
+        DEO_LOG_WARNING(NETWORKING, "Invalid peer address format: " + peer_address);
+        return;
+    }
+    
+    std::string address = peer_address.substr(0, colon_pos);
+    uint16_t port = static_cast<uint16_t>(std::stoi(peer_address.substr(colon_pos + 1)));
+    
+    // Mark that we've requested peer list to avoid rate limiting
+    recordMessage(address, port, "getaddr");
+    
+    // Note: The actual GETADDR message sending is now handled by P2PNetworkManager
+    // This method is called by the network layer to indicate peer list discovery should happen.
+    // P2PNetworkManager should send a GETADDR message when this is called.
+    DEO_LOG_INFO(NETWORKING, "Peer list request queued for " + peer_address);
 }
 
 bool PeerManager::addPeer(const std::string& address, uint16_t port) {
@@ -384,7 +407,15 @@ void PeerManager::cleanupLoop() {
         cleanupStalePeers();
         cleanupExpiredBans();
         
-        std::this_thread::sleep_for(std::chrono::minutes(10));
+        // Sleep in smaller increments to allow quick shutdown
+        auto sleep_duration = std::chrono::seconds(1);
+        auto total_sleep = std::chrono::minutes(10);
+        auto elapsed = std::chrono::seconds(0);
+        
+        while (running_ && elapsed < total_sleep) {
+            std::this_thread::sleep_for(sleep_duration);
+            elapsed += sleep_duration;
+        }
     }
     
     DEO_LOG_INFO(NETWORKING, "Peer cleanup thread stopped");

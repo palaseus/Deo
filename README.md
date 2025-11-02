@@ -6,8 +6,8 @@ A comprehensive research implementation of a modern blockchain system designed f
 
 - **Multiple Consensus Mechanisms**: Proof-of-Work, Proof-of-Stake, and Proof-of-Authority
 - **Smart Contract Support**: EVM-compatible virtual machine with gas metering
-- **Peer-to-Peer Networking**: Robust P2P protocol with gossip propagation (full integration pending)
-- **Storage System**: JSON-based state storage with LevelDB support planned
+- **Peer-to-Peer Networking**: Robust P2P protocol with gossip propagation (fully integrated)
+- **Storage System**: LevelDB backend (default, operational) with JSON fallback
 - **Web3 Compatibility**: JSON-RPC API with HTTP server and Basic Authentication
 - **Wallet Management**: Full wallet module with account creation, import/export, and transaction signing
 - **Comprehensive Testing**: 43+ test cases with Google Test framework
@@ -90,22 +90,26 @@ Deo implements a modular architecture with clear separation of concerns:
 - Precompiled cryptographic functions
 
 ### Consensus Mechanisms
-- **Proof-of-Work**: SHA-256 based mining with adjustable difficulty
-- **Proof-of-Stake**: Validator management with stake delegation and slashing
-- **Proof-of-Authority**: Pre-authorized validator set with round-robin production
+- **Proof-of-Work** ✅: SHA-256 based mining with adjustable difficulty (fully implemented)
+- **Proof-of-Stake** ✅: Validator management with stake delegation and slashing (fully implemented)
+- **Proof-of-Authority** ✅: Pre-authorized validator set with round-robin production (fully implemented)
+
+**Note**: Advanced consensus mechanisms (DPoS, PBFT, Hybrid Consensus) are planned but not yet implemented. See `docs/ADVANCED_CONSENSUS.md` for details.
 
 ### Networking
 - TCP-based P2P communication (implemented)
-- Gossip protocol for efficient propagation (implemented, full integration pending)
+- Gossip protocol for efficient propagation (fully integrated)
 - Peer discovery and reputation systems (implemented)
+- Network synchronization (FastSync available with LevelDB + P2P)
 - NAT traversal support (planned)
 
 ### Storage
-- JSON-based state storage (operational)
+- LevelDB backend (default and operational) for blocks and state
+- JSON-based fallback storage (operational)
 - State trie structures for account management
-- LevelDB migration planned for production use
-- Block pruning and compression (planned)
-- Snapshot and backup capabilities (planned)
+- Block pruning with deletion support (implemented)
+- State snapshots and restore capabilities (implemented)
+- Compression enabled via LevelDB Snappy compression
 
 ## Documentation
 
@@ -136,7 +140,7 @@ This implementation provides the following capabilities:
 
 - **Deterministic Virtual Machine**: Fully deterministic execution with comprehensive gas metering ✅
 - **Adversarial Network Resilience**: Peer reputation systems and misbehavior detection ✅
-- **Storage System**: JSON-based state storage with LevelDB migration planned ⚠️
+- **Storage System**: LevelDB backend (default) with JSON fallback ✅
 - **Web3 Compatibility**: JSON-RPC API with 30+ methods including Web3-compatible endpoints ✅
 - **Wallet Management**: Complete wallet module with CLI and JSON-RPC integration ✅
 - **Proof-of-Stake Implementation**: PoS consensus with validator management ✅
@@ -155,42 +159,66 @@ This implementation provides the following capabilities:
 - Transaction validation and fee calculation
 - Smart contract deployment and execution
 
-⚠️ **Implemented but Pending Full Integration**:
-- P2P networking (TCP layer complete, full NodeRuntime integration pending)
-- Network message propagation (gossip protocol ready, needs NodeRuntime wiring)
-- Chain synchronization (structure in place, needs network integration)
+✅ **Fully Integrated**:
+- P2P networking (fully integrated with NodeRuntime)
+- Network message propagation (gossip protocol operational and integrated)
+- Chain synchronization (FastSync available with LevelDB + P2P)
+- Block pruning with actual deletion operations
+- State snapshot creation and restoration
 
-📋 **Planned Enhancements**:
-- LevelDB storage backend migration
-- Performance benchmarking and optimization
-- Expanded test coverage
+📋 **Recent Enhancements**:
+- ✅ LevelDB storage backend (now default)
+- ✅ Performance benchmarking suite
+- ✅ P2P network integration
+- ✅ State backup/restore functionality
 - Additional developer tools (contract templates, formatting, linting)
 
 ## Performance Metrics
 
 | Metric | Status | Notes |
 |--------|--------|-------|
-| Transaction Throughput | Not Benchmarked | Performance testing pending |
-| Block Production Time | Not Benchmarked | PoW/PoS/PoA implementations exist |
-| State Read Latency | Operational | JSON-based storage (LevelDB migration planned) |
-| Network Sync Time | Not Benchmarked | P2P network integration in progress |
+| Transaction Throughput | Benchmarked | See `tests/performance/` for benchmark tests |
+| Block Production Time | Benchmarked | Measured with PoW consensus (configurable difficulty) |
+| State Read Latency | Operational | LevelDB backend available (default), JSON fallback |
+| Network Sync Time | Operational | FastSync available with LevelDB + P2P networking |
 | Memory Usage | Operational | Varies by blockchain state size |
-| Storage Efficiency | Operational | JSON-based storage with compression planned |
+| Storage Efficiency | Operational | LevelDB default backend provides optimized storage |
 
-*Note: Performance benchmarks are not yet validated. The system is functional but metrics require formal testing.*
+*Note: Performance benchmarks are available in the test suite. Run `./bin/DeoBlockchain_tests --gtest_filter="*Benchmark*"` to execute benchmarks. See `docs/PERFORMANCE_OPTIMIZATION.md` for detailed performance guidance.*
 
 ## Testing
 
-The project includes comprehensive testing with 43+ test cases covering:
+The project includes comprehensive testing with 50+ test cases covering:
 
 - **Unit Tests**: Core components (Transaction, Block, KeyPair, Wallet)
 - **VM Tests**: Virtual machine execution and opcode validation
-- **Integration Tests**: End-to-end system validation (ongoing)
-- **Performance Tests**: Benchmarking and profiling (planned)
+- **Integration Tests**: End-to-end system validation including multi-node scenarios
+- **Performance Tests**: Benchmarking suite with JSON/LevelDB backend comparison
 - **Security Tests**: Vulnerability assessment and threat detection
-- **Network Tests**: P2P protocol and message propagation (planned)
+- **Network Tests**: P2P protocol and message propagation tests
+- **Multi-Node Tests**: End-to-end multi-node P2P networking validation
+- **Workflow Tests**: Complete node lifecycle and operation workflows
 
-*Note: Test suite is actively expanding. Current coverage includes core blockchain operations, cryptographic operations, and wallet functionality.*
+### Running Tests
+
+```bash
+# Run all tests
+./build/bin/DeoBlockchain_tests
+
+# Run integration tests
+./build/bin/DeoBlockchain_tests --gtest_filter="*Integration*"
+
+# Run multi-node tests
+./build/bin/DeoBlockchain_tests --gtest_filter="*MultiNode*"
+
+# Run workflow tests
+./build/bin/DeoBlockchain_tests --gtest_filter="*Workflow*"
+
+# Run performance benchmarks
+./build/bin/DeoBlockchain_tests --gtest_filter="*Benchmark*"
+```
+
+*Test suite continues to expand with comprehensive coverage of all system components.*
 
 ## License
 

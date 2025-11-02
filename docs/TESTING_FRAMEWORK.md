@@ -30,7 +30,15 @@ tests/
 ├── vm/                # Virtual machine tests
 │   └── test_virtual_machine.cpp
 ├── network/           # Networking tests
-│   └── test_peer_connection_manager.cpp
+│   ├── test_peer_connection_manager.cpp
+│   ├── test_p2p_integration.cpp
+│   └── test_node_runtime_network.cpp
+├── integration/       # End-to-end integration tests
+│   ├── test_multi_node.cpp
+│   └── test_complete_workflows.cpp
+├── performance/       # Performance benchmarks
+│   ├── benchmark_block_production.cpp
+│   └── benchmark_tx_throughput.cpp
 ├── testing/           # Testing framework tests
 │   └── test_adversarial_testing.cpp
 └── api/               # API tests
@@ -264,12 +272,35 @@ TEST_F(IntegrationTest, FullBlockchainOperation) {
 }
 ```
 
+### Multi-Node Integration Tests
+
+New comprehensive multi-node tests validate P2P networking and node synchronization:
+
+- **TwoNodeInitialization**: Tests two nodes starting and connecting
+- **TransactionPropagation**: Validates transaction broadcast across nodes
+- **BlockchainStateConsistency**: Ensures state consistency across nodes
+- **NodeStatistics**: Verifies statistics collection across nodes
+- **MempoolOperation**: Tests mempool functionality
+
+### Complete Workflow Tests
+
+End-to-end workflow tests validate complete node operation:
+
+- **NodeLifecycle**: Tests initialization, start, stop
+- **TransactionToMempool**: Validates transaction submission flow
+- **BlockchainStateQuery**: Tests state retrieval
+- **BlockRetrieval**: Tests block query by hash and height
+- **MempoolManagement**: Tests mempool operations
+- **StatisticsCollection**: Verifies metrics collection
+
 ### Integration Test Results
 
 - **Node Startup**: 100% success rate
 - **Contract Deployment**: 99.9% success rate
 - **Transaction Execution**: 99.8% success rate
 - **State Consistency**: 100% success rate
+- **Multi-Node Communication**: Operational with P2P networking
+- **Workflow Completeness**: All workflows validated
 
 ## Test Execution
 

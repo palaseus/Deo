@@ -167,8 +167,8 @@ bool Transaction::sign(const std::string& private_key) {
         return false;
     }
     
-    // Get transaction data for signing
-    std::string tx_data = getSerializedData();
+    // Get transaction data for signing (excluding signatures)
+    std::string tx_data = getSerializedDataForSigning();
     
     // Sign each input
     for (auto& input : inputs_) {
@@ -200,8 +200,8 @@ bool Transaction::verify() const {
         return false;
     }
     
-    // Get transaction data for verification
-    std::string tx_data = getSerializedData();
+    // Get transaction data for verification (excluding signatures, same as signing)
+    std::string tx_data = getSerializedDataForSigning();
     
     // Verify each input signature
     for (const auto& input : inputs_) {
@@ -611,6 +611,35 @@ std::string Transaction::getSerializedData() const {
     ss << inputs_.size();
     for (const auto& input : inputs_) {
         ss << input.getSerializedData();
+    }
+    
+    // Serialize outputs
+    ss << outputs_.size();
+    for (const auto& output : outputs_) {
+        ss << output.getSerializedData();
+    }
+    
+    ss << lock_time_;
+    ss << static_cast<int>(type_);
+    
+    return ss.str();
+}
+
+std::string Transaction::getSerializedDataForSigning() const {
+    std::stringstream ss;
+    
+    // Serialize in deterministic order for signing (excluding signatures)
+    ss << version_;
+    
+    // Serialize inputs (excluding signatures)
+    ss << inputs_.size();
+    for (const auto& input : inputs_) {
+        // Serialize input without signature
+        ss << input.previous_tx_hash
+           << input.output_index
+           << ""  // Empty signature
+           << input.public_key
+           << input.sequence;
     }
     
     // Serialize outputs
